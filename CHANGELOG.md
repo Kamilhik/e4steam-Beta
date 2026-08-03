@@ -3,6 +3,53 @@
 All notable changes to e4steam are documented here. Version numbers below
 belong to this fork and are independent of upstream e4mc releases.
 
+## 0.3.0-beta.1 - 2026-08-03
+
+### English
+
+- Replaced the deprecated `ISteamNetworking` transport with
+  `ISteamNetworkingMessages`, the packet-oriented API built on Steam
+  Networking Sockets; raised the wire and lobby protocol to version 3.
+- Added periodic acceptance for authenticated lobby peers and Steam Networking
+  Sockets diagnostics for delayed session-request callbacks.
+- Added an experimental native-style Steam Friends screen with compact menu
+  buttons, Friends and Invitations tabs, responsive pagination, Steam avatars,
+  online/e4steam/Spacewar states, tooltips, empty/loading/error states, and
+  direct Invite, Join, Profile, Refresh, and Back actions.
+- Split Steam social data from lobby management and pass immutable snapshots
+  to Minecraft's client thread; Friends UI actions now reuse the Steam worker
+  without creating per-click background threads.
+- Added expiring and cancelable invitation history, duplicate-click protection,
+  safe screen reopen/close handling, rich-presence compatibility checks, and
+  overlay fallbacks.
+- Kept App ID 480, TCP and UDP tunneling, voice-mod compatibility, the standard
+  8-player integrated-world limit, and the Minecraft 26.2 terrain-loading fix.
+- Added Friends UI lifecycle, social sorting, invitation expiry, capacity, and
+  release-JAR compatibility audits.
+
+### Русский
+
+- Устаревший транспорт `ISteamNetworking` заменён на
+  `ISteamNetworkingMessages` — пакетный API поверх Steam Networking Sockets;
+  версия сетевого и lobby-протокола повышена до 3.
+- Добавлены периодическое принятие сессий проверенных участников lobby и
+  диагностика Steam Networking Sockets при задержке callback-запроса.
+- Добавлен экспериментальный нативный экран друзей Steam: компактные кнопки,
+  вкладки «Друзья» и «Приглашения», адаптивная пагинация, аватары Steam,
+  статусы сети/e4steam/Spacewar, подсказки, состояния загрузки, пустого списка
+  и ошибки, а также действия приглашения, подключения, профиля, обновления и
+  возврата.
+- Данные Steam Social отделены от управления лобби и передаются в клиентский
+  поток Minecraft неизменяемыми снимками; интерфейс использует общий Steam
+  worker без создания отдельного фонового потока на каждое нажатие.
+- Добавлена история приглашений со сроком действия и отменой, защита от быстрых
+  повторных нажатий, безопасное повторное открытие экрана, проверка совместимости
+  rich presence и запасной путь через оверлей Steam.
+- Сохранены App ID 480, TCP и UDP, поддержка голосовых модов, стандартный лимит
+  интегрированного мира 8 игроков и исправление загрузки территории Minecraft 26.2.
+- Добавлены тесты жизненного цикла Friends UI, сортировки, срока приглашений,
+  вместимости и аудит совместимости релизных JAR.
+
 ## 0.2.0 - 2026-08-01
 
 ### English
@@ -69,13 +116,6 @@ belong to this fork and are independent of upstream e4mc releases.
   `voiceChatPort`, and six-artifact UDP audits.
 - Raised the e4steam wire and lobby protocol version to 2; both players must
   use the same `0.2.0-alpha.4` build.
-
-## 0.2.0-alpha.3 - 2026-08-01
-
-- Increased shared integrated-world capacity to 32 players total, including
-  the host, and aligned the Steam lobby with the same limit.
-- Added a shared, tested session-limit definition used by both Minecraft and
-  the Steam transport.
 
 ## 0.2.0-alpha.2 - 2026-07-31
 

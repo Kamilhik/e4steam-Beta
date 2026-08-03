@@ -93,7 +93,6 @@ shares Minecraft's port. Another UDP mod can use the `voiceChatPort` setting.
 - Windows x64 is primary; Linux x64 is experimental; macOS and 32-bit systems are unsupported.
 - Both players need Steam, e4steam, matching Minecraft versions, and compatible loaders.
 - Some declared version/loader combinations are experimental until manually smoke-tested.
-- The current shared-world limit is 32 players including the host.
 
 ## Demo
 
@@ -178,7 +177,6 @@ Simple Voice Chat определяется автоматически. Plasmo Vo
 - Windows x64 — основная платформа, Linux x64 экспериментальный; macOS и 32-bit не поддерживаются.
 - Всем нужны Steam, e4steam, одинаковая версия Minecraft и совместимые загрузчики.
 - Непроверенные сочетания версий и загрузчиков считаются экспериментальными.
-- Лимит открытого мира — 32 игрока вместе с хостом.
 
 </details>
 

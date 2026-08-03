@@ -1,0 +1,39 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "e4steam_minecraft:font/friends.png",
+      "ascent": 8,
+      "height": 8,
+      "chars": ["\ue400"]
+    },
+    {
+      "type": "bitmap",
+      "file": "e4steam_minecraft:font/invite.png",
+      "ascent": 8,
+      "height": 8,
+      "chars": ["\ue401"]
+    },
+    {
+      "type": "bitmap",
+      "file": "e4steam_minecraft:font/join.png",
+      "ascent": 8,
+      "height": 8,
+      "chars": ["\ue402"]
+    },
+    {
+      "type": "bitmap",
+      "file": "e4steam_minecraft:font/profile.png",
+      "ascent": 8,
+      "height": 8,
+      "chars": ["\ue403"]
+    },
+    {
+      "type": "bitmap",
+      "file": "e4steam_minecraft:font/refresh.png",
+      "ascent": 8,
+      "height": 8,
+      "chars": ["\ue404"]
+    }
+  ]
+}

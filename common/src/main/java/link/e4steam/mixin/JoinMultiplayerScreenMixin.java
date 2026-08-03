@@ -1,8 +1,10 @@
 package link.e4steam.mixin;
 
 import link.e4steam.E4steamClient;
+import link.e4steam.FriendsUiIcons;
 import link.e4steam.MinecraftUiCompat;
 import link.e4steam.Mirror;
+import link.e4steam.SteamFriendsScreens;
 import link.e4steam.steam.SteamRuntime;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
@@ -40,20 +42,20 @@ public abstract class JoinMultiplayerScreenMixin extends Screen {
         }
 
         e4steam$friendsButton = addRenderableWidget(
-                MinecraftUiCompat.button(
-                        Mirror.translatable("text.e4steam_minecraft.steamOpening"),
+                MinecraftUiCompat.iconButton(
+                        FriendsUiIcons.friends(),
+                        Mirror.translatable("text.e4steam_minecraft.steamFriendsHelp"),
                         button -> e4steam$openFriendsOverlay(),
-                        Math.max(4, width - 104),
+                        Math.max(4, width - 26),
                         6,
-                        100,
-                        20
+                        20,
+                        20,
+                        "minecraft:friends/friends",
+                        15,
+                        15
                 )
         );
         e4steam$friendsButton.active = false;
-        MinecraftUiCompat.tooltip(
-                e4steam$friendsButton,
-                Mirror.translatable("text.e4steam_minecraft.steamFriendsHelp")
-        );
         e4steam$startWaitingForInvites(e4steam$screenGeneration);
     }
 
@@ -76,36 +78,9 @@ public abstract class JoinMultiplayerScreenMixin extends Screen {
         if (button == null || !button.active) {
             return;
         }
-
-        final int generation = e4steam$screenGeneration;
-        button.active = false;
-        button.setMessage(Mirror.translatable("text.e4steam_minecraft.steamOpening"));
-
-        Thread thread = new Thread(() -> {
-            try {
-                SteamRuntime.Activity activity = e4steam$getOrAcquireActivity(generation);
-                if (activity == null) {
-                    return;
-                }
-                SteamRuntime.get().openFriendsOverlay();
-                e4steam$updateButton(
-                        generation,
-                        Mirror.translatable("text.e4steam_minecraft.steamFriends"),
-                        true,
-                        Mirror.translatable("text.e4steam_minecraft.steamFriendsHelp")
-                );
-            } catch (Throwable throwable) {
-                E4steamClient.LOGGER.warn("Could not open the Steam friends overlay", throwable);
-                e4steam$updateButton(
-                        generation,
-                        Mirror.translatable("text.e4steam_minecraft.steamUnavailable"),
-                        true,
-                        Mirror.translatable("text.e4steam_minecraft.overlayUnavailable")
-                );
-            }
-        }, "e4steam-steam-friends-overlay");
-        thread.setDaemon(true);
-        thread.start();
+        if (minecraft != null) {
+            MinecraftUiCompat.setScreen(minecraft, SteamFriendsScreens.create((Screen) (Object) this));
+        }
     }
 
     @Unique
@@ -192,7 +167,7 @@ public abstract class JoinMultiplayerScreenMixin extends Screen {
         client.execute(() -> {
             Button button = e4steam$friendsButton;
             if (e4steam$screenActive && generation == e4steam$screenGeneration && button != null) {
-                button.setMessage(message);
+                button.setMessage(FriendsUiIcons.friends());
                 button.active = active;
                 MinecraftUiCompat.tooltip(button, tooltip);
             }

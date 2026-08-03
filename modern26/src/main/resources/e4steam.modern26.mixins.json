@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "link.e4steam.mixin26",
+  "compatibilityLevel": "JAVA_25",
+  "minVersion": "0.8",
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "client": [
+    "FriendsButton26Mixin",
+    "MultiplayerOptionsScreen26Mixin"
+  ]
+}

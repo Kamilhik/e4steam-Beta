@@ -67,6 +67,46 @@ public final class MinecraftUiCompat {
         throw new IllegalStateException("No compatible Minecraft Button factory was found");
     }
 
+    /** Creates the 26.x native SpriteIconButton and falls back to a compact text icon. */
+    public static Button iconButton(
+            Component fallbackIcon,
+            Component tooltip,
+            Consumer<Button> onPress,
+            int x,
+            int y,
+            int width,
+            int height,
+            String sprite,
+            int spriteWidth,
+            int spriteHeight
+    ) {
+        if (MinecraftVersion.current().startsWith("26.")) {
+            try {
+                Class<?> factory = Class.forName("link.e4steam.FriendsUi26Widgets");
+                Method method = factory.getMethod(
+                        "iconButton",
+                        Component.class,
+                        Consumer.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        String.class,
+                        int.class,
+                        int.class
+                );
+                return (Button) method.invoke(
+                        null, tooltip, onPress, x, y, width, height, sprite, spriteWidth, spriteHeight
+                );
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                // The normal button below remains functional on snapshots with another widget API.
+            }
+        }
+        Button button = button(fallbackIcon, onPress, x, y, width, height);
+        tooltip(button, tooltip);
+        return button;
+    }
+
     /**
      * Adds a modern hover tooltip where that API exists. Minecraft 1.17-1.19.2
      * simply keeps the button without a tooltip.
@@ -124,6 +164,75 @@ public final class MinecraftUiCompat {
             }
         }
         return fallback;
+    }
+
+    /** Opens a screen across pre-26 Minecraft#setScreen and 26.x Gui#setScreen ownership. */
+    public static void setScreen(Minecraft minecraft, Screen screen) {
+        if (!MinecraftVersion.current().startsWith("26.")) {
+            minecraft.setScreen(screen);
+            return;
+        }
+        Class<?> type = minecraft.getClass();
+        while (type != null) {
+            for (java.lang.reflect.Field field : type.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers())
+                        || !field.getType().getName().equals("net.minecraft.client.gui.Gui")) {
+                    continue;
+                }
+                try {
+                    field.setAccessible(true);
+                    Object gui = field.get(minecraft);
+                    if (gui == null) {
+                        continue;
+                    }
+                    for (Method method : gui.getClass().getMethods()) {
+                        if (!Modifier.isStatic(method.getModifiers())
+                                && method.getReturnType() == void.class
+                                && method.getParameterCount() == 1
+                                && method.getParameterTypes()[0] == Screen.class) {
+                            method.invoke(gui, screen);
+                            return;
+                        }
+                    }
+                } catch (ReflectiveOperationException | RuntimeException ignored) {
+                    // Try another Gui field or superclass.
+                }
+            }
+            type = type.getSuperclass();
+        }
+        throw new IllegalStateException("Could not locate Minecraft 26.x screen controller");
+    }
+
+    /** Reads the active screen across pre-26 Minecraft#screen and 26.x Gui#screen ownership. */
+    public static Screen currentScreen(Minecraft minecraft) {
+        if (!MinecraftVersion.current().startsWith("26.")) {
+            return minecraft.screen;
+        }
+        Class<?> type = minecraft.getClass();
+        while (type != null) {
+            for (java.lang.reflect.Field field : type.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers())
+                        || !field.getType().getName().equals("net.minecraft.client.gui.Gui")) {
+                    continue;
+                }
+                try {
+                    field.setAccessible(true);
+                    Object gui = field.get(minecraft);
+                    if (gui == null) continue;
+                    for (Method method : gui.getClass().getMethods()) {
+                        if (!Modifier.isStatic(method.getModifiers())
+                                && method.getParameterCount() == 0
+                                && Screen.class.isAssignableFrom(method.getReturnType())) {
+                            return (Screen) method.invoke(gui);
+                        }
+                    }
+                } catch (ReflectiveOperationException | RuntimeException ignored) {
+                    // Try another Gui field or superclass.
+                }
+            }
+            type = type.getSuperclass();
+        }
+        return null;
     }
 
     /**

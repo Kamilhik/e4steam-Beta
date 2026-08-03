@@ -28,9 +28,50 @@ public class E4steamClient {
     public static volatile SteamSession session;
     public static volatile SteamAccessMode selectedAccessMode = SteamAccessMode.FRIENDS_ONLY;
     public static final Logger LOGGER = LoggerFactory.getLogger(E4steamClient.MOD_ID);
+    private static final Object SOCIAL_PRESENCE_LOCK = new Object();
+    private static SteamRuntime.Activity socialPresenceActivity;
 
     public static void init() {
         Config.INSTANCE.id(); // Touch to initialize for McQoy
+    }
+
+    public static boolean isHostEnabled() {
+        return Config.INSTANCE.hostEnabled.value();
+    }
+
+    /** Keeps Steam social presence and incoming e4steam invitation signals active. */
+    public static void ensureSocialPresence() {
+        synchronized (SOCIAL_PRESENCE_LOCK) {
+            if (socialPresenceActivity != null) return;
+            SteamRuntime runtime = SteamRuntime.get();
+            SteamRuntime.Activity acquired;
+            try {
+                acquired = runtime.acquireActivity();
+            } catch (RuntimeException failure) {
+                LOGGER.debug("Steam social presence is unavailable", failure);
+                return;
+            }
+            socialPresenceActivity = acquired;
+            runtime.ensureSocialPresenceAsync().exceptionally(failure -> {
+                synchronized (SOCIAL_PRESENCE_LOCK) {
+                    if (socialPresenceActivity == acquired) {
+                        socialPresenceActivity = null;
+                        acquired.close();
+                    }
+                }
+                LOGGER.debug("Could not publish Steam social presence", failure);
+                return null;
+            });
+        }
+    }
+
+    private static void stopSocialPresence() {
+        SteamRuntime.Activity closing;
+        synchronized (SOCIAL_PRESENCE_LOCK) {
+            closing = socialPresenceActivity;
+            socialPresenceActivity = null;
+        }
+        if (closing != null) closing.close();
     }
 
     public static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
@@ -43,17 +84,16 @@ public class E4steamClient {
         dispatcher.register(
                 Commands.literal("e4steam")
                         .requires(src -> {
-                            if (src.getServer() == null) {
+                            if (src.getServer() == null || src.getServer().isDedicatedServer()) {
                                 return false;
                             }
-                            if (src.getServer().isDedicatedServer()) {
-                                return src.hasPermission(4);
-                            } else {
-                                try {
-                                    return Mirror.isSingleplayerOwner(src.getServer(), src.getPlayerOrException());
-                                } catch (CommandSyntaxException e) {
-                                    return false;
-                                }
+                            try {
+                                return Mirror.isSingleplayerOwner(
+                                        src.getServer(), src.getPlayerOrException()
+                                );
+                            } catch (CommandSyntaxException | RuntimeException failure) {
+                                LOGGER.debug("Could not verify the integrated-server owner", failure);
+                                return false;
                             }
                         })
                         .then(Commands.literal("stop").executes(ctx -> {
@@ -145,9 +185,9 @@ public class E4steamClient {
     private static void showStopConfirmation(CommandSourceStack source, SteamSession requestedSession) {
         Minecraft minecraft = Minecraft.getInstance();
         minecraft.execute(() -> {
-            Screen previousScreen = minecraft.screen;
-            minecraft.setScreen(new ConfirmScreen(confirmed -> {
-                minecraft.setScreen(previousScreen);
+            Screen previousScreen = MinecraftUiCompat.currentScreen(minecraft);
+            MinecraftUiCompat.setScreen(minecraft, new ConfirmScreen(confirmed -> {
+                MinecraftUiCompat.setScreen(minecraft, previousScreen);
                 if (!confirmed) {
                     return;
                 }
@@ -184,6 +224,7 @@ public class E4steamClient {
 
     /** Stops Spacewar before Minecraft connects to a regular, non-e4steam server. */
     public static void stopSteamForDirectServerConnection() {
+        stopSocialPresence();
         SteamSession current = session;
         if (current != null) {
             current.stop();
@@ -192,6 +233,32 @@ public class E4steamClient {
             }
         }
         SteamRuntime.get().stopForDirectServerConnection();
+    }
+
+    /** Transfers an invitation notification from the Steam worker to Minecraft's client thread. */
+    public static void showSteamInvitationToast(
+            long lobbyId,
+            long friendSteamId,
+            String friendName,
+            String minecraftName,
+            long invitationGeneration
+    ) {
+        Minecraft minecraft = Minecraft.getInstance();
+        minecraft.execute(() -> SteamFriendsScreens.showInvitationToast(
+                lobbyId, friendSteamId, friendName, minecraftName, invitationGeneration
+        ));
+    }
+
+    public static void showSteamJoinRequestToast(
+            long friendSteamId,
+            String friendName,
+            String minecraftName,
+            long requestGeneration
+    ) {
+        Minecraft minecraft = Minecraft.getInstance();
+        minecraft.execute(() -> SteamFriendsScreens.showJoinRequestToast(
+                friendSteamId, friendName, minecraftName, requestGeneration
+        ));
     }
 
     /** Called by the Steam callback thread after a validated lobby invitation was accepted. */
@@ -204,7 +271,7 @@ public class E4steamClient {
         Minecraft minecraft = Minecraft.getInstance();
         minecraft.execute(() -> {
             String displayName = normalizedHostName(hostName);
-            if (minecraft.screen instanceof ConnectScreen) {
+            if (MinecraftUiCompat.currentScreen(minecraft) instanceof ConnectScreen) {
                 SteamRuntime.get().cancelGuestJoin();
                 minecraft.gui.getChat().addMessage(
                         Mirror.translatable("text.e4steam_minecraft.joinAlreadyConnecting")
@@ -217,18 +284,18 @@ public class E4steamClient {
                 return;
             }
 
-            Screen previousScreen = minecraft.screen;
+            Screen previousScreen = MinecraftUiCompat.currentScreen(minecraft);
             Component title = Mirror.translatable("text.e4steam_minecraft.joinInviteTitle");
             Component message = Mirror.translatable("text.e4steam_minecraft.joinInviteMessage", displayName);
-            minecraft.setScreen(new ConfirmScreen(confirmed -> {
+            MinecraftUiCompat.setScreen(minecraft, new ConfirmScreen(confirmed -> {
                 if (!confirmed) {
                     SteamRuntime.get().cancelGuestJoin();
-                    minecraft.setScreen(previousScreen);
+                    MinecraftUiCompat.setScreen(minecraft, previousScreen);
                     return;
                 }
 
                 Screen returnScreen = multiplayerScreen();
-                minecraft.setScreen(MinecraftUiCompat.messageScreen(
+                MinecraftUiCompat.setScreen(minecraft, MinecraftUiCompat.messageScreen(
                         Mirror.translatable("connect.connecting"),
                         previousScreen
                 ));
@@ -259,13 +326,13 @@ public class E4steamClient {
     public static void showSteamJoinFailure(Component reason) {
         Minecraft minecraft = Minecraft.getInstance();
         minecraft.execute(() -> {
-            if (minecraft.level != null || minecraft.screen instanceof ConnectScreen) {
+            if (minecraft.level != null || MinecraftUiCompat.currentScreen(minecraft) instanceof ConnectScreen) {
                 minecraft.gui.getChat().addMessage(reason);
                 return;
             }
 
             Screen parent = currentOrMultiplayerScreen(minecraft);
-            minecraft.setScreen(new DisconnectedScreen(
+            MinecraftUiCompat.setScreen(minecraft, new DisconnectedScreen(
                     parent,
                     Mirror.translatable("connect.failed"),
                     reason
@@ -346,13 +413,14 @@ public class E4steamClient {
             LOGGER.warn("Could not claim the Steam invitation", unwrapCompletionException(throwable));
         }
         if (minecraft.level != null) {
-            minecraft.setScreen(rejectionScreen);
+            MinecraftUiCompat.setScreen(minecraft, rejectionScreen);
         }
         showSteamJoinFailure(Mirror.translatable("text.e4steam_minecraft.joinExpired"));
     }
 
     private static Screen currentOrMultiplayerScreen(Minecraft minecraft) {
-        return minecraft.screen != null ? minecraft.screen : multiplayerScreen();
+        Screen current = MinecraftUiCompat.currentScreen(minecraft);
+        return current != null ? current : multiplayerScreen();
     }
 
     private static Screen multiplayerScreen() {

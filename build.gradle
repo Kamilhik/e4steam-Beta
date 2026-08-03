@@ -84,6 +84,26 @@ tasks.register("legacyReleaseJars", GradleBuild) {
     tasks = ["clean", "releaseJars"]
 }
 
+tasks.register("modern26Ui", Exec) {
+    group = "build"
+    description = "Compile the native Minecraft 26.x Friends screen against the extractor GUI API."
+    dependsOn(":common:classes")
+
+    String java25Home = System.getenv("JAVA25_HOME")
+    if (java25Home == null) {
+        throw new GradleException("JAVA25_HOME must point to a Java 25 runtime when building Minecraft 26.x UI")
+    }
+    String executable = new File(java25Home, "bin/java${org.gradle.internal.os.OperatingSystem.current().windows ? '.exe' : ''}")
+    commandLine(
+            executable,
+            "-classpath", file("gradle/wrapper/gradle-wrapper.jar").absolutePath,
+            "org.gradle.wrapper.GradleWrapperMain",
+            "-p", file("modern26").absolutePath,
+            "clean", "jar", "--no-daemon"
+    )
+    environment("JAVA_HOME", java25Home)
+}
+
 tasks.register("releaseJars") {
     group = "build"
     description = "Build and test all six public runtime JAR variants."
@@ -220,10 +240,49 @@ tasks.register("releaseJars") {
                 if (zip.getEntry("assets/e4steam_minecraft/icon.png") == null) {
                     throw new GradleException("${variant.label} is missing the e4steam mod icon")
                 }
+                if (zip.getEntry("link/e4steam/SessionLimits.class") != null
+                        || zip.getEntry("link/e4steam/mixin/PlayerListMixin.class") != null) {
+                    throw new GradleException("${variant.label} still contains the removed 32-player expansion")
+                }
+                String mixinConfig = zip.getInputStream(zip.getEntry("e4steam.mixins.json")).getText("UTF-8")
+                if (mixinConfig.contains("PlayerListMixin") || mixinConfig.contains("SessionLimits")) {
+                    throw new GradleException("${variant.label} still registers the removed 32-player expansion")
+                }
+
+                boolean modern26Variant = variant.label == "Fabric/Quilt Modern"
+                if (modern26Variant != (zip.getEntry("link/e4steam/SteamFriends26Screen.class") != null)) {
+                    throw new GradleException(
+                            "${variant.label} has an invalid Minecraft 26.x Friends UI boundary"
+                    )
+                }
+                zip.entries().findAll { entry ->
+                    !entry.directory && entry.name.endsWith(".class")
+                            && entry.name != "link/e4steam/SteamFriendsScreens.class"
+                }.each { entry ->
+                    String constants = new String(
+                            zip.getInputStream(entry).readAllBytes(),
+                            java.nio.charset.StandardCharsets.ISO_8859_1
+                    )
+                    if (!modern26Variant && constants.contains("link/e4steam/SteamFriends26Screen")) {
+                        throw new GradleException(
+                                "${variant.label} directly links the Minecraft 26.x Friends screen from ${entry.name}"
+                        )
+                    }
+                }
 
                 def classEntry = zip.getEntry("link/e4steam/steam/SteamAddress.class")
                 if (classEntry == null) {
                     throw new GradleException("${variant.label} is missing SteamAddress.class")
+                }
+                if (zip.getEntry("link/e4steam/steam/SteamNetworkingMessagesTransport.class") == null) {
+                    throw new GradleException(
+                            "${variant.label} is missing the Steam Networking Messages transport"
+                    )
+                }
+                if (zip.getEntry("link/e4steam/steam/SteamPacketTransport.class") != null) {
+                    throw new GradleException(
+                            "${variant.label} still contains the deprecated ISteamNetworking transport"
+                    )
                 }
                 def stream = new DataInputStream(zip.getInputStream(classEntry))
                 try {
@@ -253,22 +312,6 @@ tasks.register("releaseJars") {
                 if (clientConstants.contains("net/minecraft/client/gui/screens/GenericDirtMessageScreen")) {
                     throw new GradleException(
                             "${variant.label} directly links the pre-1.21 GenericDirtMessageScreen class"
-                    )
-                }
-
-                def limitsEntry = zip.getEntry("link/e4steam/SessionLimits.class")
-                def playerListMixinEntry = zip.getEntry("link/e4steam/mixin/PlayerListMixin.class")
-                if (limitsEntry == null || playerListMixinEntry == null) {
-                    throw new GradleException("${variant.label} is missing the shared 32-player limit")
-                }
-                String playerListMixinConstants = new String(
-                        zip.getInputStream(playerListMixinEntry).readAllBytes(),
-                        java.nio.charset.StandardCharsets.ISO_8859_1
-                )
-                if (!playerListMixinConstants.contains("link/e4steam/SessionLimits")
-                        || !playerListMixinConstants.contains("maxPlayers")) {
-                    throw new GradleException(
-                            "${variant.label} does not apply the shared limit to Minecraft's PlayerList"
                     )
                 }
 

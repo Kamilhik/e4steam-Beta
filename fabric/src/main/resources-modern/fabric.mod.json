@@ -16,7 +16,8 @@
     ]
   },
   "mixins": [
-    "e4steam.mixins.json"
+    "e4steam.mixins.json",
+    "e4steam.modern26.mixins.json"
   ],
   "depends": {
     "fabric-api": "*",

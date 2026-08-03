@@ -16,8 +16,8 @@
     "PauseScreenMixin",
     "ServerConnectionListenerMixin",
     "ShareToLanScreenMixin",
+    "TitleScreenMixin",
     "WhitelistCommandMixin",
-    "PlayerListMixin",
     "ServerNameResolverMixin"
   ]
 }

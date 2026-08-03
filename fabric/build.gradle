@@ -61,8 +61,10 @@ tasks.register('patchModernMetadata', Jar) {
     archiveClassifier = 'dev-shadow-modern'
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
-    from(file("src/main/resources-modern"), zipTree(shadowJar.archiveFile))
-    dependsOn shadowJar
+    from(file("src/main/resources-modern"))
+    from({ zipTree(rootProject.file("modern26/build/libs/e4steam-modern26-ui.jar")) })
+    from(zipTree(shadowJar.archiveFile))
+    dependsOn shadowJar, rootProject.tasks.named("modern26Ui")
     filesMatching("fabric.mod.json") {
         expand "version": project.version
     }

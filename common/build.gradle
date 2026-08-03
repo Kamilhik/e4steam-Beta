@@ -2,6 +2,8 @@ architectury {
     common(rootProject.enabled_platforms.split(","))
 }
 
+sourceSets.main.java.srcDir("src/modern/java")
+
 dependencies {
     // We depend on fabric loader here to use the fabric @Environment annotations and get the mixin dependencies
     // Do NOT use other classes from fabric loader
@@ -10,6 +12,8 @@ dependencies {
     implementation("com.code-disaster.steamworks4j:steamworks4j:${rootProject.steamworks4j_version}") {
         transitive = false
     }
+    // Minecraft provides JNA at runtime (5.10.0 or newer in every supported line).
+    compileOnly "net.java.dev.jna:jna:5.10.0"
     testImplementation platform("org.junit:junit-bom:5.10.2")
     testImplementation "org.junit.jupiter:junit-jupiter"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher"
@@ -17,6 +21,8 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    environment "SteamAppId", "480"
+    environment "SteamGameId", "480"
 }
 
 processResources {
