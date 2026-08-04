@@ -5,11 +5,14 @@ import com.mojang.authlib.GameProfile;
 import link.e4steam.steam.SteamRuntime;
 import link.e4steam.steam.SteamSession;
 import link.e4steam.steam.SteamSocialSnapshot;
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.LoadingDotsWidget;
+import net.minecraft.client.gui.components.SpriteIconButton;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.components.toasts.FriendToast;
 import net.minecraft.client.gui.screens.Screen;
@@ -28,11 +31,17 @@ import java.util.concurrent.CompletableFuture;
 
 /** Native Minecraft 26.x renderer for the Steam Friends overlay. */
 public final class SteamFriends26Screen extends Screen {
-    private static final int CONTENT_WIDTH = 180;
-    private static final int PANEL_WIDTH = 196;
+    /** Exact width used by Minecraft's cancelled Friends Overlay. */
+    private static final int CONTENT_WIDTH = 220;
+    private static final int PANEL_WIDTH = 236;
+    private static final int TAB_WIDTH = 110;
+    private static final int TAB_HEIGHT = 20;
+    private static final int TAB_GAP = 7;
     private static final int BORDER = 8;
+    private static final int LIST_MARGIN = 8;
+    private static final int ENTRY_WIDTH = CONTENT_WIDTH - LIST_MARGIN * 2;
     private static final int ROW_HEIGHT = 28;
-    private static final int FRIEND_CONTROLS_HEIGHT = 48;
+    private static final int FRIEND_CONTROLS_HEIGHT = 50;
     private static final int REQUESTS_HEADER_HEIGHT = 24;
     private static final int SCROLLBAR_WIDTH = 6;
     private static final int SCROLLBAR_MIN_HEIGHT = 32;
@@ -85,6 +94,7 @@ public final class SteamFriends26Screen extends Screen {
     private Button requestsTab;
     private Checkbox showAllCheckbox;
     private EditBox searchBox;
+    private LoadingDotsWidget loadingDots;
     private String searchText = "";
     private boolean draggingScrollbar;
 
@@ -97,28 +107,26 @@ public final class SteamFriends26Screen extends Screen {
     protected void init() {
         open = true;
         generation = requestGate.open();
-        int availableContentHeight = Math.max(FRIEND_CONTROLS_HEIGHT + ROW_HEIGHT, height - 80);
-        int completeFriendRows = Math.max(1,
-                (availableContentHeight - FRIEND_CONTROLS_HEIGHT) / ROW_HEIGHT);
-        contentHeight = FRIEND_CONTROLS_HEIGHT + completeFriendRows * ROW_HEIGHT;
+        contentHeight = Math.max(FRIEND_CONTROLS_HEIGHT + ROW_HEIGHT, height - 80);
         panelHeight = contentHeight + BORDER * 2 + 1;
         panelLeft = (width - PANEL_WIDTH) / 2;
-        panelTop = Math.max(8, (height - panelHeight) / 2);
+        panelTop = (height - panelHeight) / 2;
         contentLeft = panelLeft + BORDER;
         contentTop = panelTop + BORDER;
         visibleRows = rowCapacity();
 
         friendsTab = addRenderableWidget(new FriendsUi26TabButton(
-                contentLeft, contentTop - 27, 90,
+                contentLeft, contentTop - TAB_HEIGHT - TAB_GAP, TAB_WIDTH,
                 Component.translatable("text.e4steam_minecraft.friends.tab"),
                 () -> select(Tab.FRIENDS), () -> selectedTab == Tab.FRIENDS
         ));
         requestsTab = addRenderableWidget(new FriendsUi26TabButton(
-                contentLeft + 90, contentTop - 27, 90,
+                contentLeft + TAB_WIDTH, contentTop - TAB_HEIGHT - TAB_GAP, TAB_WIDTH,
                 requestsTitle(), () -> select(Tab.REQUESTS), () -> selectedTab == Tab.REQUESTS
         ));
         searchBox = addRenderableWidget(new EditBox(
-                font, contentLeft + 4, contentTop + 3, CONTENT_WIDTH - 8, 20,
+                font, contentLeft + LIST_MARGIN, contentTop + 3,
+                CONTENT_WIDTH - LIST_MARGIN * 2, 20,
                 Component.translatable("text.e4steam_minecraft.friends.search")
         ));
         searchBox.setMaxLength(64);
@@ -131,9 +139,9 @@ public final class SteamFriends26Screen extends Screen {
         });
         showAllCheckbox = addRenderableWidget(Checkbox.builder(
                         Component.translatable("text.e4steam_minecraft.friends.filter.all"), font)
-                .pos(contentLeft + 4, contentTop + 27)
+                .pos(contentLeft + LIST_MARGIN, contentTop + 27)
                 .selected(showAllFriends)
-                .maxWidth(CONTENT_WIDTH - 8)
+                .maxWidth(CONTENT_WIDTH - LIST_MARGIN * 2)
                 .tooltip(Tooltip.create(Component.translatable(
                         "text.e4steam_minecraft.friends.filter.all.help")))
                 .onValueChange((checkbox, selected) -> {
@@ -142,6 +150,9 @@ public final class SteamFriends26Screen extends Screen {
                     updateWidgets();
                 })
                 .build());
+        loadingDots = addRenderableWidget(new LoadingDotsWidget(
+                font, Component.translatable("text.e4steam_minecraft.friends.loading")
+        ));
         inviteRowActions.clear();
         requestJoinRowActions.clear();
         joinRowActions.clear();
@@ -163,12 +174,14 @@ public final class SteamFriends26Screen extends Screen {
             joinRowActions.add(addRenderableWidget(FriendsUi26Widgets.iconButton(
                     Component.translatable("text.e4steam_minecraft.friends.join.help"),
                     input -> activateRow(selectedRow),
-                    actionButtonLeft(), actionY, 20, 20, "minecraft:friends/accept", 18, 18
+                    actionButtonLeft(), actionY, 20, 20,
+                    "minecraft:friends/accept", "minecraft:friends/accept_highlighted", 18, 18
             )));
             rejectRowActions.add(addRenderableWidget(FriendsUi26Widgets.iconButton(
                     Component.translatable("text.e4steam_minecraft.friends.request.reject.help"),
                     input -> rejectInvitationRow(selectedRow),
-                    actionButtonLeft(), actionY, 20, 20, "minecraft:friends/reject", 18, 18
+                    actionButtonLeft(), actionY, 20, 20,
+                    "minecraft:friends/reject", "minecraft:friends/reject_highlighted", 18, 18
             )));
         }
         updateWidgets();
@@ -209,17 +222,23 @@ public final class SteamFriends26Screen extends Screen {
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         double mouseX = event.x();
         double mouseY = event.y();
-        if (inside(mouseX, mouseY, contentLeft, contentTop - 27, 90, 20)) {
+        if (inside(mouseX, mouseY, contentLeft, contentTop - TAB_HEIGHT - TAB_GAP, TAB_WIDTH, TAB_HEIGHT)) {
             select(Tab.FRIENDS);
             return true;
         }
-        if (inside(mouseX, mouseY, contentLeft + 90, contentTop - 27, 90, 20)) {
+        if (inside(mouseX, mouseY, contentLeft + TAB_WIDTH, contentTop - TAB_HEIGHT - TAB_GAP, TAB_WIDTH, TAB_HEIGHT)) {
             select(Tab.REQUESTS);
             return true;
         }
         if (isOverScrollbar(mouseX, mouseY)) {
             draggingScrollbar = true;
             updateScrollFromMouse(mouseY);
+            return true;
+        }
+        int tabsTop = contentTop - TAB_HEIGHT - TAB_GAP;
+        if (!inside(mouseX, mouseY, panelLeft, tabsTop,
+                PANEL_WIDTH, panelHeight + TAB_HEIGHT + TAB_GAP)) {
+            onClose();
             return true;
         }
         return super.mouseClicked(event, doubleClick);
@@ -284,10 +303,10 @@ public final class SteamFriends26Screen extends Screen {
             graphics.nextStratum();
             parent.extractRenderState(graphics, -1, -1, partialTick);
             graphics.nextStratum();
+            extractBlurredBackground(graphics);
         } else {
             super.extractBackground(graphics, mouseX, mouseY, partialTick);
         }
-        graphics.fill(0, 0, width, height, 0x77000000);
         graphics.blitSprite(RenderPipelines.GUI_TEXTURED, BACKGROUND,
                 panelLeft, panelTop, PANEL_WIDTH, panelHeight);
     }
@@ -307,7 +326,7 @@ public final class SteamFriends26Screen extends Screen {
                 contentLeft, rowsTop() - 2, CONTENT_WIDTH, 2);
         List<SteamSocialSnapshot.Friend> friends = visibleFriends();
         int start = scrollIndex;
-        if (friends.isEmpty()) {
+        if (friends.isEmpty() && !loadingDots.visible) {
             String emptyKey = emptyFriendsStatusKey();
             int listHeight = contentHeight - (rowsTop() - contentTop);
             if (emptyKey.endsWith(".empty") && listHeight >= 66) {
@@ -324,25 +343,29 @@ public final class SteamFriends26Screen extends Screen {
         for (int row = 0; row < visibleRows && start + row < friends.size(); row++) {
             SteamSocialSnapshot.Friend friend = friends.get(start + row);
             int y = rowsTop() + row * ROW_HEIGHT;
-            avatar(graphics, friend.steamId(), friend.avatar(), contentLeft + 4, y + 2, 24);
-            graphics.text(font, Component.literal(shortName(friend.name(), 15)), contentLeft + 32, y + 3, 0xffffffff, false);
-            graphics.text(font, friendStatus(friend), contentLeft + 32, y + 15, friendStatusColor(friend), false);
-            graphics.blitSprite(RenderPipelines.GUI_TEXTURED, SEPARATOR,
-                    contentLeft, y + ROW_HEIGHT - 2, CONTENT_WIDTH, 2);
+            avatar(graphics, friend.steamId(), friend.avatar(), entryLeft(), y + 2, 24);
+            int textLeft = entryLeft() + 28;
+            int textRight = actionButtonLeft() - 2;
+            graphics.text(font, Component.literal(ellipsize(friend.name(), textRight - textLeft)),
+                    textLeft, y + 3, 0xffffffff, false);
+            graphics.text(font, ellipsize(friendStatus(friend), textRight - textLeft),
+                    textLeft, y + 15, friendStatusColor(friend), false);
         }
         renderScrollbar(graphics, friends.size());
     }
 
     private void renderRequests(GuiGraphicsExtractor graphics) {
-        graphics.centeredText(font,
-                Component.translatable("text.e4steam_minecraft.friends.requests.received.heading")
-                        .withStyle(style -> style.withUnderlined(true)),
-                contentLeft + CONTENT_WIDTH / 2, contentTop + 7, 0xffffffff);
-        graphics.blitSprite(RenderPipelines.GUI_TEXTURED, SEPARATOR,
-                contentLeft, rowsTop() - 2, CONTENT_WIDTH, 2);
+        if (!loadingDots.visible) {
+            graphics.centeredText(font,
+                    Component.translatable("text.e4steam_minecraft.friends.requests.received.heading")
+                            .withStyle(ChatFormatting.BOLD, ChatFormatting.UNDERLINE),
+                    contentLeft + CONTENT_WIDTH / 2, contentTop + 7, 0xffffffff);
+            graphics.blitSprite(RenderPipelines.GUI_TEXTURED, SEPARATOR,
+                    contentLeft, rowsTop() - 2, CONTENT_WIDTH, 2);
+        }
         List<SteamSocialSnapshot.Invitation> invitations = visibleInvitations();
         int start = scrollIndex;
-        if (invitations.isEmpty()) {
+        if (invitations.isEmpty() && !loadingDots.visible) {
             graphics.centeredText(font, Component.translatable("text.e4steam_minecraft.friends.requests.empty"),
                     contentLeft + CONTENT_WIDTH / 2, rowsTop() + (contentHeight - REQUESTS_HEADER_HEIGHT) / 2 - 4,
                     0xffa0a0a0);
@@ -353,13 +376,14 @@ public final class SteamFriends26Screen extends Screen {
             SteamSocialSnapshot.Friend friend = findFriend(invitation.steamId());
             avatar(graphics, invitation.steamId(),
                     friend == null ? SteamSocialSnapshot.Avatar.empty() : friend.avatar(),
-                    contentLeft + 4, y + 2, 24);
-            graphics.text(font, Component.literal(shortName(invitation.friendName(), 15)), contentLeft + 32, y + 3, 0xffffffff, false);
+                    entryLeft(), y + 2, 24);
+            int textLeft = entryLeft() + 28;
+            int textRight = acceptButtonLeft() - 2;
+            graphics.text(font, Component.literal(ellipsize(invitation.friendName(), textRight - textLeft)),
+                    textLeft, y + 3, 0xffffffff, false);
             boolean received = invitation.actionable(System.currentTimeMillis());
-            graphics.text(font, invitationStatus(invitation),
-                    contentLeft + 32, y + 15, received ? 0xff55ff55 : 0xffaaaaaa, false);
-            graphics.blitSprite(RenderPipelines.GUI_TEXTURED, SEPARATOR,
-                    contentLeft, y + ROW_HEIGHT - 2, CONTENT_WIDTH, 2);
+            graphics.text(font, ellipsize(invitationStatus(invitation), textRight - textLeft),
+                    textLeft, y + 15, received ? 0xff55ff55 : 0xffaaaaaa, false);
         }
         renderScrollbar(graphics, invitations.size());
     }
@@ -649,6 +673,14 @@ public final class SteamFriends26Screen extends Screen {
         searchBox.active = !operationInProgress;
         showAllCheckbox.visible = selectedTab == Tab.FRIENDS;
         showAllCheckbox.active = !operationInProgress;
+        loadingDots.visible = !loadedOnce
+                && "text.e4steam_minecraft.friends.loading".equals(statusKey);
+        loadingDots.setWidth(ENTRY_WIDTH);
+        int loadingTop = selectedTab == Tab.FRIENDS ? rowsTop() : contentTop;
+        int loadingHeight = selectedTab == Tab.FRIENDS
+                ? contentHeight - FRIEND_CONTROLS_HEIGHT
+                : contentHeight;
+        loadingDots.setPosition(entryLeft(), loadingTop + Math.max(0, (loadingHeight - loadingDots.getHeight()) / 2));
         scrollIndex = Math.min(scrollIndex, maxScrollIndex());
         List<?> entries = entries();
         int start = scrollIndex;
@@ -664,6 +696,12 @@ public final class SteamFriends26Screen extends Screen {
             requestJoinRowActions.get(row).visible = false;
             joinRowActions.get(row).visible = false;
             rejectRowActions.get(row).visible = false;
+            if (!operationInProgress) {
+                clearLoading(inviteRowActions.get(row));
+                clearLoading(requestJoinRowActions.get(row));
+                clearLoading(joinRowActions.get(row));
+                clearLoading(rejectRowActions.get(row));
+            }
             if (row >= visibleRows || index >= entries.size()) continue;
             Button action;
             if (selectedTab == Tab.REQUESTS) {
@@ -693,6 +731,12 @@ public final class SteamFriends26Screen extends Screen {
             }
             action.visible = true;
             action.active = !operationInProgress;
+        }
+    }
+
+    private static void clearLoading(Button button) {
+        if (button instanceof SpriteIconButton spriteButton) {
+            spriteButton.setLoading(false);
         }
     }
 
@@ -730,9 +774,16 @@ public final class SteamFriends26Screen extends Screen {
         return null;
     }
 
-    private static String shortName(String value, int maxCharacters) {
-        if (value == null || value.length() <= maxCharacters) return value == null ? "" : value;
-        return value.substring(0, Math.max(1, maxCharacters - 1)) + "…";
+    private String ellipsize(String value, int maxWidth) {
+        if (value == null || value.isEmpty()) return "";
+        if (font.width(value) <= maxWidth) return value;
+        return font.plainSubstrByWidth(value, Math.max(1, maxWidth - font.width("…"))) + "…";
+    }
+
+    private Component ellipsize(Component value, int maxWidth) {
+        if (font.width(value) <= maxWidth) return value;
+        return Component.literal(font.plainSubstrByWidth(value.getString(),
+                Math.max(1, maxWidth - font.width("…"))) + "…");
     }
 
     private int friendStatusColor(SteamSocialSnapshot.Friend friend) {
@@ -886,11 +937,15 @@ public final class SteamFriends26Screen extends Screen {
     }
 
     private int actionButtonLeft() {
-        return contentLeft + CONTENT_WIDTH - SCROLLBAR_WIDTH - 24;
+        return entryLeft() + ENTRY_WIDTH - 20;
     }
 
     private int acceptButtonLeft() {
-        return actionButtonLeft() - 22;
+        return actionButtonLeft() - 24;
+    }
+
+    private int entryLeft() {
+        return contentLeft + LIST_MARGIN;
     }
 
     private int rowsTop() {

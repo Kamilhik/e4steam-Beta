@@ -38,6 +38,11 @@ belong to this fork and are independent of upstream e4mc releases.
   now wait for `OPEN_ACK` before forwarding Minecraft traffic and retry the
   authenticated handshake for a bounded time without weakening invite-only
   membership or token checks.
+- Rebuilt the Minecraft 26.x Steam Friends overlay around the original
+  220-pixel vanilla layout: 110-pixel tabs, 204x28 entries, native panel blur,
+  list margins, scrollbar, empty illustration, loading animation, and
+  highlighted accept/reject sprites. Steam search and filtering remain in the
+  Friends tab without a non-vanilla refresh button.
 
 ### Русский
 
@@ -73,6 +78,11 @@ belong to this fork and are independent of upstream e4mc releases.
   участника. Клиентский мост теперь ждёт `OPEN_ACK` перед передачей трафика
   Minecraft и ограниченно повторяет защищённое рукопожатие, не ослабляя проверку
   членства invite-only lobby и токена приглашения.
+- Экран друзей Steam для Minecraft 26.x перестроен по оригинальной ванильной
+  разметке шириной 220 пикселей: вкладки по 110 пикселей, строки 204x28,
+  штатное размытие фона, отступы списка, полоса прокрутки, иллюстрация пустого
+  списка, анимация загрузки и hover-спрайты принятия/отклонения. Поиск и фильтр
+  Steam сохранены без лишней кнопки обновления.
 
 ## 0.2.0 - 2026-08-01
 
