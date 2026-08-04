@@ -5,6 +5,7 @@ import link.e4steam.FriendsUiIcons;
 import link.e4steam.MinecraftUiCompat;
 import link.e4steam.MinecraftVersion;
 import link.e4steam.Mirror;
+import link.e4steam.OptionalCompatibility;
 import link.e4steam.SteamFriendsScreens;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.events.GuiEventListener;
@@ -26,8 +27,13 @@ public abstract class PauseScreenMixin extends Screen {
         super(title);
     }
 
-    @Inject(method = "init", at = @At("TAIL"))
+    @Inject(method = "init", at = @At("TAIL"), require = 0)
     private void e4steam$addInviteButton(CallbackInfo ci) {
+        OptionalCompatibility.run("pause-screen-friends", this::e4steam$addInviteButtonSafely);
+    }
+
+    @Unique
+    private void e4steam$addInviteButtonSafely() {
         if (MinecraftVersion.current().startsWith("26.")) {
             for (GuiEventListener child : children()) {
                 if (child.getClass().getName().equals("net.minecraft.client.gui.components.FriendsButton")) {
@@ -39,14 +45,14 @@ public abstract class PauseScreenMixin extends Screen {
                 MinecraftUiCompat.iconButton(
                         FriendsUiIcons.friends(),
                         Mirror.translatable("text.e4steam_minecraft.steamFriendsHelp"),
-                        button -> {
+                        button -> OptionalCompatibility.run("pause-screen-friends-open", () -> {
                             if (minecraft != null) {
                                 MinecraftUiCompat.setScreen(
                                         minecraft,
                                         SteamFriendsScreens.create((Screen) (Object) this)
                                 );
                             }
-                        },
+                        }),
                         Math.max(4, width - 26),
                         6,
                         20,

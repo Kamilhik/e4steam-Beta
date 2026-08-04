@@ -21,8 +21,12 @@ public final class SteamFriendsScreens {
             Class<?> type = Class.forName(className, true, Screen.class.getClassLoader());
             Constructor<?> constructor = type.getConstructor(Screen.class);
             return (Screen) constructor.newInstance(parent);
-        } catch (ReflectiveOperationException exception) {
-            throw new IllegalStateException("Could not create the e4steam friends screen", exception);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+            E4steamClient.LOGGER.warn(
+                    "The Steam Friends screen is unavailable on this Minecraft/mod combination",
+                    exception
+            );
+            return parent;
         }
     }
 
@@ -45,7 +49,7 @@ public final class SteamFriendsScreens {
                     long.class
             );
             method.invoke(null, lobbyId, friendSteamId, friendName, minecraftName, invitationGeneration);
-        } catch (ReflectiveOperationException exception) {
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
             E4steamClient.LOGGER.debug("Native e4steam invitation toast is unavailable", exception);
             Minecraft.getInstance().gui.getChat().addMessage(Mirror.translatable(
                     "text.e4steam_minecraft.friends.invite.toast", friendName
@@ -70,7 +74,7 @@ public final class SteamFriendsScreens {
                     long.class
             );
             method.invoke(null, friendSteamId, friendName, minecraftName, requestGeneration);
-        } catch (ReflectiveOperationException exception) {
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
             E4steamClient.LOGGER.debug("Native e4steam join-request toast is unavailable", exception);
             Minecraft.getInstance().gui.getChat().addMessage(Mirror.translatable(
                     "text.e4steam_minecraft.friends.join_request.toast", friendName
@@ -82,11 +86,11 @@ public final class SteamFriendsScreens {
         try {
             Class.forName("net.minecraft.client.gui.GuiGraphicsExtractor", false, Screen.class.getClassLoader());
             return EXTRACTOR;
-        } catch (ClassNotFoundException ignored) {
+        } catch (ClassNotFoundException | LinkageError ignored) {
             try {
                 Class.forName("net.minecraft.client.gui.GuiGraphics", false, Screen.class.getClassLoader());
                 return MODERN;
-            } catch (ClassNotFoundException legacy) {
+            } catch (ClassNotFoundException | LinkageError legacy) {
                 return LEGACY;
             }
         }

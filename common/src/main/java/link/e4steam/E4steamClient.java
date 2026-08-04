@@ -76,11 +76,17 @@ public class E4steamClient {
 
     public static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
         if (Config.INSTANCE.restoreDedicatedCommands.value() && Agnos.isClient()) {
-            BanListCommands.register(dispatcher);
-            BanPlayerCommands.register(dispatcher);
-            PardonCommand.register(dispatcher);
-            WhitelistCommand.register(dispatcher);
+            OptionalCompatibility.run("restored-integrated-server-commands", () -> {
+                BanListCommands.register(dispatcher);
+                BanPlayerCommands.register(dispatcher);
+                PardonCommand.register(dispatcher);
+                WhitelistCommand.register(dispatcher);
+            });
         }
+        OptionalCompatibility.run("e4steam-commands", () -> registerE4steamCommands(dispatcher));
+    }
+
+    private static void registerE4steamCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(
                 Commands.literal("e4steam")
                         .requires(src -> {

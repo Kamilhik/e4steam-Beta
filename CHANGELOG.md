@@ -29,6 +29,10 @@ belong to this fork and are independent of upstream e4mc releases.
   8-player integrated-world limit, and the Minecraft 26.2 terrain-loading fix.
 - Added Friends UI lifecycle, social sorting, invitation expiry, capacity, and
   release-JAR compatibility audits.
+- Made optional menu, Friends UI, LAN-option, and restored-command hooks
+  fail-open for modpacks: a conflicting UI/command mod now disables only the
+  affected e4steam integration and records one warning instead of crashing the
+  client. Core Steam TCP/UDP hooks remain strict and auditable.
 
 ### Русский
 
@@ -55,6 +59,10 @@ belong to this fork and are independent of upstream e4mc releases.
   интегрированного мира 8 игроков и исправление загрузки территории Minecraft 26.2.
 - Добавлены тесты жизненного цикла Friends UI, сортировки, срока приглашений,
   вместимости и аудит совместимости релизных JAR.
+- Необязательные хуки меню, Friends UI, настроек LAN и восстановленных команд
+  переведены в безопасный режим для модпаков: при конфликте отключается только
+  затронутая интеграция e4steam и один раз записывается предупреждение вместо
+  вылета клиента. Основные хуки Steam TCP/UDP остаются строгими и проверяемыми.
 
 ## 0.2.0 - 2026-08-01
 

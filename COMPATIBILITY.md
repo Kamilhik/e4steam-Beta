@@ -59,3 +59,18 @@ The same loader/version JAR is used on Windows x64 and Linux x64. All six
 release artifacts bundle native libraries for both operating systems; Linux
 remains experimental because its multiplayer path has not been manually
 verified yet.
+
+## Modpack compatibility
+
+Normal Minecraft mod traffic uses the tunneled TCP connection automatically.
+The Steam bridge also carries UDP for Simple Voice Chat, Plasmo Voice, or the
+single fallback UDP port selected in `e4steam.toml`. Mods that require several
+independent UDP listening ports still need explicit support and should be
+reported with the mod name and crash/latest log.
+
+Menu buttons, the Friends screen, LAN access controls, and restored integrated
+server commands are optional integrations. If another mod replaces one of
+those vanilla hooks, e4steam skips the affected integration and logs one
+warning instead of aborting Minecraft. The host listener and Steam address
+resolver remain required because silently skipping either would advertise a
+connection that cannot work.

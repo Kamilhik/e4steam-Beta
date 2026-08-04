@@ -15,14 +15,14 @@ import java.util.function.Predicate;
 
 @Mixin(BanListCommands.class)
 public class BanListCommandsMixin {
-    @Redirect(method = "register", at = @At(value = "INVOKE", target = "Lcom/mojang/brigadier/builder/LiteralArgumentBuilder;requires(Ljava/util/function/Predicate;)Lcom/mojang/brigadier/builder/ArgumentBuilder;"))
+    @Redirect(method = "register", at = @At(value = "INVOKE", target = "Lcom/mojang/brigadier/builder/LiteralArgumentBuilder;requires(Ljava/util/function/Predicate;)Lcom/mojang/brigadier/builder/ArgumentBuilder;"), require = 0)
     private static ArgumentBuilder<CommandSourceStack, LiteralArgumentBuilder<CommandSourceStack>> allowOwner(LiteralArgumentBuilder<CommandSourceStack> instance, Predicate<CommandSourceStack> predicate) {
         return instance.requires(src -> {
             try {
-                if (!Agnos.isClient()) return predicate.test(src);
-                if (Mirror.isSingleplayerOwner(src.getServer(), src.getPlayerOrException()))
+                if (Agnos.isClient()
+                        && Mirror.isSingleplayerOwner(src.getServer(), src.getPlayerOrException()))
                     return true;
-            } catch (CommandSyntaxException ignored) {
+            } catch (CommandSyntaxException | RuntimeException | LinkageError ignored) {
             }
             return predicate.test(src);
         });

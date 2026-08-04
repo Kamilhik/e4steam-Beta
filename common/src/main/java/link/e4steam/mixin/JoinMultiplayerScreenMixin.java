@@ -4,6 +4,7 @@ import link.e4steam.E4steamClient;
 import link.e4steam.FriendsUiIcons;
 import link.e4steam.MinecraftUiCompat;
 import link.e4steam.Mirror;
+import link.e4steam.OptionalCompatibility;
 import link.e4steam.SteamFriendsScreens;
 import link.e4steam.steam.SteamRuntime;
 import net.minecraft.client.Minecraft;
@@ -34,8 +35,13 @@ public abstract class JoinMultiplayerScreenMixin extends Screen {
         super(title);
     }
 
-    @Inject(method = "init", at = @At("TAIL"))
+    @Inject(method = "init", at = @At("TAIL"), require = 0)
     private void e4steam$addSteamFriendsButton(CallbackInfo ci) {
+        OptionalCompatibility.run("multiplayer-screen-friends", this::e4steam$addSteamFriendsButtonSafely);
+    }
+
+    @Unique
+    private void e4steam$addSteamFriendsButtonSafely() {
         synchronized (e4steam$activityLock) {
             e4steam$screenActive = true;
             e4steam$screenGeneration++;
@@ -59,8 +65,13 @@ public abstract class JoinMultiplayerScreenMixin extends Screen {
         e4steam$startWaitingForInvites(e4steam$screenGeneration);
     }
 
-    @Inject(method = "removed", at = @At("TAIL"))
+    @Inject(method = "removed", at = @At("TAIL"), require = 0)
     private void e4steam$releaseSteamActivity(CallbackInfo ci) {
+        OptionalCompatibility.run("multiplayer-screen-cleanup", this::e4steam$releaseSteamActivitySafely);
+    }
+
+    @Unique
+    private void e4steam$releaseSteamActivitySafely() {
         SteamRuntime.Activity activity;
         synchronized (e4steam$activityLock) {
             e4steam$screenActive = false;
@@ -74,13 +85,15 @@ public abstract class JoinMultiplayerScreenMixin extends Screen {
 
     @Unique
     private void e4steam$openFriendsOverlay() {
-        Button button = e4steam$friendsButton;
-        if (button == null || !button.active) {
-            return;
-        }
-        if (minecraft != null) {
-            MinecraftUiCompat.setScreen(minecraft, SteamFriendsScreens.create((Screen) (Object) this));
-        }
+        OptionalCompatibility.run("multiplayer-screen-friends-open", () -> {
+            Button button = e4steam$friendsButton;
+            if (button == null || !button.active) {
+                return;
+            }
+            if (minecraft != null) {
+                MinecraftUiCompat.setScreen(minecraft, SteamFriendsScreens.create((Screen) (Object) this));
+            }
+        });
     }
 
     @Unique

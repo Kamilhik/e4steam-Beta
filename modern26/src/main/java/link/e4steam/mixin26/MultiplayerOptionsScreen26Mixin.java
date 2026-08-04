@@ -1,6 +1,7 @@
 package link.e4steam.mixin26;
 
 import link.e4steam.E4steamClient;
+import link.e4steam.OptionalCompatibility;
 import link.e4steam.steam.SteamAccessMode;
 import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.Tooltip;
@@ -23,8 +24,13 @@ public abstract class MultiplayerOptionsScreen26Mixin extends Screen {
         super(title);
     }
 
-    @Inject(method = "init", at = @At("TAIL"))
+    @Inject(method = "init", at = @At("TAIL"), require = 0)
     private void e4steam$addSteamAccessMode(CallbackInfo ci) {
+        OptionalCompatibility.run("minecraft-26-access-mode", this::e4steam$addSteamAccessModeSafely);
+    }
+
+    @Unique
+    private void e4steam$addSteamAccessModeSafely() {
         if (!E4steamClient.isHostEnabled()) return;
         SteamAccessMode initial = E4steamClient.selectedAccessMode;
         if (initial == null) {
@@ -51,11 +57,13 @@ public abstract class MultiplayerOptionsScreen26Mixin extends Screen {
         addRenderableWidget(e4steam$accessButton);
     }
 
-    @Inject(method = "repositionElements", at = @At("TAIL"))
+    @Inject(method = "repositionElements", at = @At("TAIL"), require = 0)
     private void e4steam$repositionSteamAccessMode(CallbackInfo ci) {
-        if (e4steam$accessButton != null) {
-            e4steam$accessButton.setX(width / 2 - 102);
-            e4steam$accessButton.setY(height - 58);
-        }
+        OptionalCompatibility.run("minecraft-26-access-mode-layout", () -> {
+            if (e4steam$accessButton != null) {
+                e4steam$accessButton.setX(width / 2 - 102);
+                e4steam$accessButton.setY(height - 58);
+            }
+        });
     }
 }

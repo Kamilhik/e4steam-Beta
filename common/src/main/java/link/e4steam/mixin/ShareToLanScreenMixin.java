@@ -4,6 +4,7 @@ import link.e4steam.E4steamClient;
 import link.e4steam.Config;
 import link.e4steam.MinecraftUiCompat;
 import link.e4steam.Mirror;
+import link.e4steam.OptionalCompatibility;
 import link.e4steam.steam.SteamAccessMode;
 import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.screens.Screen;
@@ -21,8 +22,13 @@ public abstract class ShareToLanScreenMixin extends Screen {
         super(title);
     }
 
-    @Inject(method = "init", at = @At("TAIL"))
+    @Inject(method = "init", at = @At("TAIL"), require = 0)
     private void e4steam$addSteamAccessMode(CallbackInfo ci) {
+        OptionalCompatibility.run("open-to-lan-access-mode", this::e4steam$addSteamAccessModeSafely);
+    }
+
+    @Unique
+    private void e4steam$addSteamAccessModeSafely() {
         if (!Config.INSTANCE.hostEnabled.value()) {
             return;
         }

@@ -4,6 +4,7 @@ import link.e4steam.FriendsUiIcons;
 import link.e4steam.MinecraftUiCompat;
 import link.e4steam.MinecraftVersion;
 import link.e4steam.Mirror;
+import link.e4steam.OptionalCompatibility;
 import link.e4steam.SteamFriendsScreens;
 import link.e4steam.E4steamClient;
 import net.minecraft.client.gui.components.Button;
@@ -12,6 +13,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.network.chat.Component;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -25,8 +27,13 @@ public abstract class TitleScreenMixin extends Screen {
         super(title);
     }
 
-    @Inject(method = "init", at = @At("TAIL"))
+    @Inject(method = "init", at = @At("TAIL"), require = 0)
     private void e4steam$addSteamFriends(CallbackInfo ci) {
+        OptionalCompatibility.run("title-screen-friends", this::e4steam$addSteamFriendsSafely);
+    }
+
+    @Unique
+    private void e4steam$addSteamFriendsSafely() {
         E4steamClient.ensureSocialPresence();
         int buttonX = width / 2 - 10;
         int buttonY = height / 4 + 120;
@@ -51,14 +58,14 @@ public abstract class TitleScreenMixin extends Screen {
             break;
         }
 
-        Button button = addRenderableWidget(MinecraftUiCompat.iconButton(
+        addRenderableWidget(MinecraftUiCompat.iconButton(
                 FriendsUiIcons.friends(),
                 Mirror.translatable("text.e4steam_minecraft.steamFriendsHelp"),
-                ignored -> {
+                ignored -> OptionalCompatibility.run("title-screen-friends-open", () -> {
                     if (minecraft != null) {
                         MinecraftUiCompat.setScreen(minecraft, SteamFriendsScreens.create((Screen) (Object) this));
                     }
-                },
+                }),
                 buttonX,
                 buttonY,
                 20,
