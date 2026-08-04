@@ -1,6 +1,7 @@
 package link.e4steam;
 
 import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.authlib.GameProfile;
 import link.e4steam.steam.SteamRuntime;
 import link.e4steam.steam.SteamSession;
 import link.e4steam.steam.SteamSocialSnapshot;
@@ -858,7 +859,12 @@ public final class SteamFriends26Screen extends Screen {
     private static ResolvableProfile resolvableProfile(String minecraftName) {
         if (minecraftName == null || minecraftName.isBlank()) return null;
         try {
-            return ResolvableProfile.createUnresolved(minecraftName);
+            // A resolved vanilla offline profile avoids Microsoft/Mojang
+            // lookups while keeping FriendToast's deterministic player head.
+            return ResolvableProfile.createResolved(new GameProfile(
+                    OfflineMinecraftProfile.uuidForName(minecraftName),
+                    minecraftName
+            ));
         } catch (RuntimeException ignored) {
             return null;
         }

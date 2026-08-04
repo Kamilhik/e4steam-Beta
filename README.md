@@ -60,6 +60,11 @@ Declared ranges are broader than the manually tested matrix. Check
 4. Install the same e4steam release on every player's computer.
 5. Start Steam and sign in before launching Minecraft.
 
+Minecraft offline-mode/local profiles are supported. e4steam does not use a
+Microsoft/Mojang UUID for access control: peers are authenticated by their
+Steam identity, lobby membership, and the per-world invitation token. Steam
+must still be running and signed in on every computer.
+
 ## Steam Overlay setup
 
 1. In Steam, select **Games → Add a Non-Steam Game** and add your Minecraft launcher.
@@ -143,6 +148,11 @@ Minecraft и UDP-трафик поддерживаемых голосовых м
 3. Поместите JAR в папку `mods`. Для Fabric и Quilt также установите Fabric API.
 4. Установите одинаковый релиз e4steam всем игрокам.
 5. Запустите Steam и войдите в аккаунт до запуска Minecraft.
+
+Поддерживаются локальные профили и штатный `offline-mode` Minecraft. Для
+контроля доступа e4steam не использует UUID Microsoft/Mojang: подключение
+проверяется по Steam ID, участию в lobby и токену открытого мира. При этом
+Steam должен быть запущен, а пользователь — авторизован на каждом компьютере.
 
 ## Как настроить оверлей Steam
 

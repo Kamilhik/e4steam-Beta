@@ -12,6 +12,9 @@ belong to this fork and are independent of upstream e4mc releases.
   Networking Sockets; raised the wire and lobby protocol to version 3.
 - Added periodic acceptance for authenticated lobby peers and Steam Networking
   Sockets diagnostics for delayed session-request callbacks.
+- Added offline-mode profile compatibility: access remains authenticated by
+  Steam ID and invite token, while Minecraft 26.2 friend notifications use
+  vanilla deterministic offline UUIDs without Mojang profile resolution.
 - Added an experimental native-style Steam Friends screen with compact menu
   buttons, Friends and Invitations tabs, responsive pagination, Steam avatars,
   online/e4steam/Spacewar states, tooltips, empty/loading/error states, and
@@ -34,6 +37,9 @@ belong to this fork and are independent of upstream e4mc releases.
   версия сетевого и lobby-протокола повышена до 3.
 - Добавлены периодическое принятие сессий проверенных участников lobby и
   диагностика Steam Networking Sockets при задержке callback-запроса.
+- Добавлена совместимость с offline-mode: доступ по-прежнему проверяется через
+  Steam ID и токен приглашения, а уведомления Minecraft 26.2 используют
+  стандартные offline UUID без обращения к профилям Mojang.
 - Добавлен экспериментальный нативный экран друзей Steam: компактные кнопки,
   вкладки «Друзья» и «Приглашения», адаптивная пагинация, аватары Steam,
   статусы сети/e4steam/Spacewar, подсказки, состояния загрузки, пустого списка
