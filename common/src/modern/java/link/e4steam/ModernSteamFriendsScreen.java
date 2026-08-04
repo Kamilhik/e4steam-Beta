@@ -21,6 +21,9 @@ public final class ModernSteamFriendsScreen extends SteamFriendsScreenBase {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        if (parent != null) {
+            parent.render(graphics, -1, -1, partialTick);
+        }
         ModernPainter painter = new ModernPainter(graphics);
         renderPanel(painter, mouseX, mouseY);
         super.render(graphics, mouseX, mouseY, partialTick);

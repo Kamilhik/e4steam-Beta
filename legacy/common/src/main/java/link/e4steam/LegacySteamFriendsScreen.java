@@ -24,6 +24,9 @@ public final class LegacySteamFriendsScreen extends SteamFriendsScreenBase {
 
     @Override
     public void render(PoseStack pose, int mouseX, int mouseY, float partialTick) {
+        if (parent != null) {
+            parent.render(pose, -1, -1, partialTick);
+        }
         LegacyPainter painter = new LegacyPainter(pose);
         renderPanel(painter, mouseX, mouseY);
         super.render(pose, mouseX, mouseY, partialTick);

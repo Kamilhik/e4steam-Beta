@@ -2,6 +2,7 @@ package link.e4steam;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.multiplayer.ServerData;
@@ -132,6 +133,23 @@ public final class MinecraftUiCompat {
                 continue;
             }
             return;
+        }
+    }
+
+    /** Sets the EditBox placeholder across pre-hint and modern GUI versions. */
+    public static void editBoxHint(EditBox editBox, Component hint) {
+        try {
+            Method setHint = editBox.getClass().getMethod("setHint", Component.class);
+            setHint.invoke(editBox, hint);
+            return;
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            // Minecraft 1.17-1.18 calls this a String suggestion.
+        }
+        try {
+            Method setSuggestion = editBox.getClass().getMethod("setSuggestion", String.class);
+            setSuggestion.invoke(editBox, hint.getString());
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            // Placeholder text is cosmetic; typing and filtering still work.
         }
     }
 

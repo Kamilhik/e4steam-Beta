@@ -43,6 +43,9 @@ belong to this fork and are independent of upstream e4mc releases.
   list margins, scrollbar, empty illustration, loading animation, and
   highlighted accept/reject sprites. Steam search and filtering remain in the
   Friends tab without a non-vanilla refresh button.
+- Ported that original Friends overlay layout and its complete vanilla sprite
+  set to every supported Minecraft generation, including the tabs, checkbox,
+  action states, empty-list illustration, separators, and scrollbar.
 
 ### Русский
 
@@ -83,6 +86,10 @@ belong to this fork and are independent of upstream e4mc releases.
   штатное размытие фона, отступы списка, полоса прокрутки, иллюстрация пустого
   списка, анимация загрузки и hover-спрайты принятия/отклонения. Поиск и фильтр
   Steam сохранены без лишней кнопки обновления.
+
+- Оригинальная разметка Friends overlay и полный набор ванильных спрайтов
+  перенесены на все поддерживаемые поколения Minecraft: вкладки, галочка,
+  состояния кнопок, иллюстрация пустого списка, разделители и полоса прокрутки.
 
 ## 0.2.0 - 2026-08-01
 
