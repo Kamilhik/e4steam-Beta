@@ -97,10 +97,7 @@ public final class SteamClientBridge {
             int connectionId = runtime.nextConnectionId(address.steamId());
             bridge = runtime.registerClientBridge(address.steamId(), connectionId, socket, activity);
             activity = null;
-            if (!runtime.sendOpen(bridge, address.token())) {
-                throw new IOException("Steam outbound queue is unavailable");
-            }
-            bridge.start();
+            bridge.startClientHandshake(address.token());
             handedOff = true;
             E4steamClient.LOGGER.info(
                     "Opened a local Minecraft bridge to Steam user {}",

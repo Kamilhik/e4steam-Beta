@@ -255,7 +255,22 @@ final class SteamLobbyManager implements AutoCloseable {
         if (currentGuest != null && currentGuest.hostSteamId == remoteSteamId) {
             return true;
         }
-        return hostLobby != null && isAllowedHostPeer(hostLobby, remoteSteamId);
+        HostLobby currentHost = hostLobby;
+        return currentHost != null
+                && (isAllowedHostPeer(currentHost, remoteSteamId)
+                || mayAwaitHostPeer(currentHost, remoteSteamId));
+    }
+
+    /**
+     * A private-lobby member update can reach the guest before it reaches the
+     * host. Keep the authenticated Steam session alive briefly, but do not
+     * authorize Minecraft traffic until Steam lists the friend as a member.
+     */
+    boolean mayAwaitHostPeer(SteamSession owner, long remoteSteamId) {
+        HostLobby current = hostLobby;
+        return current != null
+                && current.owner == owner
+                && mayAwaitHostPeer(current, remoteSteamId);
     }
 
     void forEachKnownSessionPeer(LongConsumer consumer) {
@@ -554,6 +569,11 @@ final class SteamLobbyManager implements AutoCloseable {
             }
         }
         return false;
+    }
+
+    private boolean mayAwaitHostPeer(HostLobby lobby, long remoteSteamId) {
+        return lobby.accessMode == SteamAccessMode.INVITE_ONLY
+                && social.isDirectFriend(remoteSteamId);
     }
 
     private void loseHostLobby(String detail) {

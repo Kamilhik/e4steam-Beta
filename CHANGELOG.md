@@ -33,6 +33,11 @@ belong to this fork and are independent of upstream e4mc releases.
   fail-open for modpacks: a conflicting UI/command mod now disables only the
   affected e4steam integration and records one warning instead of crashing the
   client. Core Steam TCP/UDP hooks remain strict and auditable.
+- Fixed intermittent invalid-session disconnects when Steam reported a private
+  lobby join to the guest before the host saw its member update. Client bridges
+  now wait for `OPEN_ACK` before forwarding Minecraft traffic and retry the
+  authenticated handshake for a bounded time without weakening invite-only
+  membership or token checks.
 
 ### Русский
 
@@ -63,6 +68,11 @@ belong to this fork and are independent of upstream e4mc releases.
   переведены в безопасный режим для модпаков: при конфликте отключается только
   затронутая интеграция e4steam и один раз записывается предупреждение вместо
   вылета клиента. Основные хуки Steam TCP/UDP остаются строгими и проверяемыми.
+- Исправлены редкие отключения с сообщением о недействительной сессии, когда
+  Steam сообщал гостю о входе в приватное lobby раньше, чем хост видел нового
+  участника. Клиентский мост теперь ждёт `OPEN_ACK` перед передачей трафика
+  Minecraft и ограниченно повторяет защищённое рукопожатие, не ослабляя проверку
+  членства invite-only lobby и токена приглашения.
 
 ## 0.2.0 - 2026-08-01
 

@@ -14,6 +14,8 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Bridges one ordinary local TCP connection to one logical Steam P2P stream. */
 final class SteamConnectionBridge {
     private static final int MAX_QUEUED_INBOUND_CHUNKS = 64;
+    private static final long CLIENT_OPEN_RETRY_MILLIS = 500;
+    private static final long CLIENT_OPEN_TIMEOUT_MILLIS = 15_000;
 
     private final SteamRuntime runtime;
     private final long remoteSteamId;
@@ -32,6 +34,7 @@ final class SteamConnectionBridge {
 
     private volatile Thread readerThread;
     private volatile Thread writerThread;
+    private volatile Thread handshakeThread;
 
     SteamConnectionBridge(
             SteamRuntime runtime,
@@ -82,6 +85,46 @@ final class SteamConnectionBridge {
         readerThread = daemonThread(this::readLoop, "e4steam-steam-local-reader");
         writerThread.start();
         readerThread.start();
+    }
+
+    /**
+     * Delays Minecraft payload forwarding until the host acknowledges OPEN.
+     * Repeating OPEN makes lobby-member propagation and a lost acknowledgement
+     * harmless while keeping the local Minecraft connection unchanged.
+     */
+    void startClientHandshake(byte[] token) {
+        if (isHostSide()) {
+            throw new IllegalStateException("A host bridge cannot start a client handshake");
+        }
+        byte[] tokenCopy = token.clone();
+        handshakeThread = daemonThread(
+                () -> clientHandshakeLoop(tokenCopy),
+                "e4steam-steam-open"
+        );
+        handshakeThread.start();
+    }
+
+    private void clientHandshakeLoop(byte[] token) {
+        long deadline = System.currentTimeMillis() + CLIENT_OPEN_TIMEOUT_MILLIS;
+        while (!closed.get() && !started.get() && System.currentTimeMillis() < deadline) {
+            if (!runtime.sendOpen(this, token)) {
+                close(true);
+                return;
+            }
+            try {
+                Thread.sleep(CLIENT_OPEN_RETRY_MILLIS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        if (!closed.get() && !started.get()) {
+            E4steamClient.LOGGER.warn(
+                    "Steam host {} did not acknowledge the Minecraft bridge in time",
+                    Long.toUnsignedString(remoteSteamId)
+            );
+            close(true);
+        }
     }
 
     void acceptSteamData(byte[] payload) {
@@ -158,6 +201,10 @@ final class SteamConnectionBridge {
             Thread writer = writerThread;
             if (writer != null) {
                 writer.interrupt();
+            }
+            Thread handshake = handshakeThread;
+            if (handshake != null && handshake != Thread.currentThread()) {
+                handshake.interrupt();
             }
 
             // Keep this exact bridge generation registered until its RESET reaches

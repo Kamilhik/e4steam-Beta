@@ -1354,6 +1354,10 @@ public final class SteamRuntime {
         if (bridge == null || bridge.isHostSide() || bridge.isClosed()) {
             return;
         }
+        if (payload.length != 3) {
+            bridge.close(true);
+            return;
+        }
         ByteBuffer buffer = ByteBuffer.wrap(payload);
         byte clientPortMode = buffer.get();
         int hostPort = Short.toUnsignedInt(buffer.getShort());
@@ -1362,6 +1366,7 @@ public final class SteamRuntime {
                     bridge,
                     VoiceChatUdpEndpoint.fromHandshake(hostPort, clientPortMode)
             );
+            bridge.start();
         } catch (IllegalArgumentException exception) {
             bridge.close(true);
         }
@@ -1373,11 +1378,20 @@ public final class SteamRuntime {
         boolean peerAllowed = registration != null
                 && currentSocial != null
                 && currentSocial.allows(registration.owner(), remoteSteamId);
+        boolean peerMayBecomeAllowed = registration != null
+                && currentSocial != null
+                && currentSocial.mayAwaitHostPeer(registration.owner(), remoteSteamId);
         SteamInvitationAuthorizer.Decision authorization = SteamInvitationAuthorizer.authorize(
                 registration == null ? null : registration.token(),
                 token,
-                peerAllowed
+                peerAllowed,
+                peerMayBecomeAllowed
         );
+        if (authorization == SteamInvitationAuthorizer.Decision.PEER_NOT_READY) {
+            // Steam can deliver LobbyEnter to the guest before the host sees
+            // the member update. The client retries OPEN with the same token.
+            return;
+        }
         if (authorization != SteamInvitationAuthorizer.Decision.ALLOWED) {
             sendStandaloneReset(remoteSteamId, key.connectionId());
             return;
@@ -1386,7 +1400,13 @@ public final class SteamRuntime {
             pendingPeers.remove(remoteSteamId);
             idleSessionDeadlines.remove(remoteSteamId);
         }
-        if (bridgeRegistry.contains(key)) {
+        SteamConnectionBridge existing = bridgeRegistry.get(key);
+        if (existing != null) {
+            if (existing.isHostSide() && !existing.isClosed()) {
+                // OPEN_ACK is reliable, but repeating it also recovers from a
+                // transport/session reset without opening another TCP socket.
+                sendOpenAck(existing, registration.udpEndpoint());
+            }
             return;
         }
         long activeHostConnections = bridgeRegistry.count(
