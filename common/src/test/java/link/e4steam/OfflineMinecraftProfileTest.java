@@ -25,4 +25,20 @@ class OfflineMinecraftProfileTest {
         );
         assertThrows(IllegalArgumentException.class, () -> OfflineMinecraftProfile.uuidForName(""));
     }
+
+    @Test
+    void recognizesOfflineOwnerWhenLauncherReplacesLocalUuid() {
+        UUID vanillaId = OfflineMinecraftProfile.uuidForName("OfflineHost");
+        UUID launcherId = UUID.fromString("11111111-2222-3333-8444-555555555555");
+
+        assertEquals(true, OfflineMinecraftProfile.sameLocalOwner(
+                vanillaId, "OfflineHost", launcherId, "offlinehost"
+        ));
+        assertEquals(false, OfflineMinecraftProfile.sameLocalOwner(
+                vanillaId, "OfflineHost", launcherId, "OtherPlayer"
+        ));
+        assertEquals(false, OfflineMinecraftProfile.sameLocalOwner(
+                null, "", null, ""
+        ));
+    }
 }

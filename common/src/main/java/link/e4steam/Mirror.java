@@ -256,14 +256,15 @@ public class Mirror {
         if (ownerProfile != null && playerProfile != null) {
             Object ownerId = invokeProfileValue(ownerProfile, PROFILE_ID_METHOD_NAMES);
             Object playerId = invokeProfileValue(playerProfile, PROFILE_ID_METHOD_NAMES);
-            if (ownerId != null && playerId != null) {
-                return ownerId.equals(playerId);
-            }
-
             Object ownerName = invokeProfileValue(ownerProfile, PROFILE_NAME_METHOD_NAMES);
             Object playerName = invokeProfileValue(playerProfile, PROFILE_NAME_METHOD_NAMES);
-            if (ownerName instanceof String owner && playerName instanceof String current) {
-                return owner.equalsIgnoreCase(current);
+            if (OfflineMinecraftProfile.sameLocalOwner(
+                    ownerId,
+                    ownerName instanceof String value ? value : null,
+                    playerId,
+                    playerName instanceof String value ? value : null
+            )) {
+                return true;
             }
         }
 

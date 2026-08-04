@@ -23,4 +23,26 @@ public final class OfflineMinecraftProfile {
                 (UUID_PREFIX + profileName).getBytes(StandardCharsets.UTF_8)
         );
     }
+
+    /**
+     * Matches the owner identity used by integrated offline-mode servers.
+     * Some launchers supply a locally generated UUID instead of the vanilla
+     * deterministic UUID, while the integrated server still preserves the
+     * same profile name. A matching UUID is preferred; the name fallback is
+     * deliberately limited to the local owner's exact profile name.
+     */
+    static boolean sameLocalOwner(
+            Object ownerId,
+            String ownerName,
+            Object playerId,
+            String playerName
+    ) {
+        if (ownerId != null && playerId != null && ownerId.equals(playerId)) {
+            return true;
+        }
+        return ownerName != null
+                && playerName != null
+                && !ownerName.isBlank()
+                && ownerName.equalsIgnoreCase(playerName);
+    }
 }

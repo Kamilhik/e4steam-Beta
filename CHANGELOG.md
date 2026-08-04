@@ -46,6 +46,9 @@ belong to this fork and are independent of upstream e4mc releases.
 - Ported that original Friends overlay layout and its complete vanilla sprite
   set to every supported Minecraft generation, including the tabs, checkbox,
   action states, empty-list illustration, separators, and scrollbar.
+- Fixed integrated-server owner detection for offline launchers that replace
+  the vanilla deterministic profile UUID; local e4steam commands now retain a
+  strict matching-name fallback without changing Steam authentication.
 
 ### Русский
 
@@ -90,6 +93,9 @@ belong to this fork and are independent of upstream e4mc releases.
 - Оригинальная разметка Friends overlay и полный набор ванильных спрайтов
   перенесены на все поддерживаемые поколения Minecraft: вкладки, галочка,
   состояния кнопок, иллюстрация пустого списка, разделители и полоса прокрутки.
+- Исправлено определение владельца встроенного сервера в offline-лаунчерах,
+  заменяющих ванильный UUID профиля: локальные команды e4steam используют
+  безопасную проверку совпадающего имени, не ослабляя авторизацию Steam.
 
 ## 0.2.0 - 2026-08-01
 
