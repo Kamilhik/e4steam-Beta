@@ -49,6 +49,12 @@ belong to this fork and are independent of upstream e4mc releases.
 - Fixed integrated-server owner detection for offline launchers that replace
   the vanilla deterministic profile UUID; local e4steam commands now retain a
   strict matching-name fallback without changing Steam authentication.
+- Stopped the active Steam LAN session and runtime before Minecraft performs its
+  final integrated-server disconnect, and explicitly request the integrated
+  server's normal shutdown before NeoForge enters its wait loop. This prevents
+  closing a shared offline world from hanging.
+- Fixed Friends UI resource identifiers on Minecraft 1.21+, where the old
+  public `ResourceLocation` constructor became private.
 
 ### Русский
 
@@ -96,6 +102,12 @@ belong to this fork and are independent of upstream e4mc releases.
 - Исправлено определение владельца встроенного сервера в offline-лаунчерах,
   заменяющих ванильный UUID профиля: локальные команды e4steam используют
   безопасную проверку совпадающего имени, не ослабляя авторизацию Steam.
+- Активная Steam LAN-сессия и runtime теперь останавливаются до финального
+  отключения встроенного сервера Minecraft; перед циклом ожидания NeoForge
+  встроенному серверу явно отправляется штатный запрос остановки. Поэтому
+  закрытие общего мира в offline-режиме больше не зависает.
+- Исправлено создание идентификаторов текстур Friends UI на Minecraft 1.21+,
+  где старый публичный конструктор `ResourceLocation` стал закрытым.
 
 ## 0.2.0 - 2026-08-01
 

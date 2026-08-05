@@ -29,11 +29,11 @@ public abstract class SteamFriendsScreenBase extends Screen {
     private static final int SCROLLBAR_WIDTH = 6;
     private static final int SCROLLBAR_MIN_HEIGHT = 24;
     private static final int REFRESH_INTERVAL_TICKS = 20;
-    private static final ResourceLocation BACKGROUND = new ResourceLocation(
+    private static final ResourceLocation BACKGROUND = MinecraftUiCompat.resourceLocation(
             "e4steam_minecraft",
             "textures/gui/sprites/friends/background.png"
     );
-    private static final ResourceLocation LIST_SEPARATOR = new ResourceLocation(
+    private static final ResourceLocation LIST_SEPARATOR = MinecraftUiCompat.resourceLocation(
             "e4steam_minecraft",
             "textures/gui/sprites/friends/list_separator_top.png"
     );
@@ -496,11 +496,15 @@ public abstract class SteamFriendsScreenBase extends Screen {
     }
 
     private static ResourceLocation friendsTexture(String fileName) {
-        return new ResourceLocation("e4steam_minecraft", "textures/gui/sprites/friends/" + fileName);
+        return MinecraftUiCompat.resourceLocation(
+                "e4steam_minecraft", "textures/gui/sprites/friends/" + fileName
+        );
     }
 
     private static ResourceLocation widgetTexture(String fileName) {
-        return new ResourceLocation("e4steam_minecraft", "textures/gui/sprites/widget/" + fileName);
+        return MinecraftUiCompat.resourceLocation(
+                "e4steam_minecraft", "textures/gui/sprites/widget/" + fileName
+        );
     }
 
     private void select(Tab tab) {

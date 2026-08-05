@@ -8,6 +8,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.multiplayer.resolver.ServerAddress;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
@@ -45,6 +46,35 @@ public final class MinecraftUiCompat {
     };
 
     private MinecraftUiCompat() {
+    }
+
+    /** Creates namespaced resource identifiers across the 1.21 constructor change. */
+    public static ResourceLocation resourceLocation(String namespace, String path) {
+        for (String factoryName : new String[]{"fromNamespaceAndPath", "tryBuild"}) {
+            try {
+                Method factory = ResourceLocation.class.getMethod(
+                        factoryName, String.class, String.class
+                );
+                Object created = factory.invoke(null, namespace, path);
+                if (created instanceof ResourceLocation location) {
+                    return location;
+                }
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                // Older Minecraft versions expose the public constructor.
+            }
+        }
+        try {
+            Constructor<ResourceLocation> constructor = ResourceLocation.class.getConstructor(
+                    String.class, String.class
+            );
+            return constructor.newInstance(namespace, path);
+        } catch (ReflectiveOperationException | RuntimeException failure) {
+            throw new IllegalStateException(
+                    "No compatible ResourceLocation factory was found for "
+                            + namespace + ':' + path,
+                    failure
+            );
+        }
     }
 
     public static Button button(

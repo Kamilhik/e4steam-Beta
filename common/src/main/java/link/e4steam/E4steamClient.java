@@ -241,6 +241,17 @@ public class E4steamClient {
         SteamRuntime.get().stopForDirectServerConnection();
     }
 
+    /** Stops every e4steam activity before Minecraft begins its final world disconnect. */
+    public static void shutdown() {
+        stopSocialPresence();
+        SteamSession current = session;
+        session = null;
+        if (current != null) {
+            current.stop();
+        }
+        SteamRuntime.get().shutdown();
+    }
+
     /** Transfers an invitation notification from the Steam worker to Minecraft's client thread. */
     public static void showSteamInvitationToast(
             long lobbyId,
