@@ -1,76 +1,130 @@
 # Release checklist
 
-e4steam 0.2.0 is the current stable release. Public builds use Steam App ID
-480 and are published as client-only release files for Windows x64 and
-experimental Linux x64 support.
+e4steam 0.3.1 is a full release. Windows x64 clients, integrated worlds and
+dedicated servers are supported. The listed retro artifacts are normal release
+files, not experimental builds. Linux x64 and macOS remain experimental until
+their manual matrices are complete. App ID 480 is permanent for this project.
 
-## Before publishing
+This document is for maintainers. Building JARs is only the middle of the
+release process; publication starts after documentation, artifact audits and
+manual evidence refer to the same candidate hashes.
 
-1. Update `CHANGELOG.md` in English first and Russian second.
-2. Update `COMPATIBILITY.md` with launch and host/guest results. Do not turn an
-   untested combination into a verified one.
-3. Run the complete verification command below on Windows.
-4. Push the release commit and wait for both Linux and Windows GitHub Actions
-   jobs to pass.
-5. Create the annotated `v<version>` tag from that verified commit.
-6. Publish the six runtime JARs as stable releases.
+## Release gates
 
-## Supported files
+| Gate | Required result |
+| --- | --- |
+| Version and changelog | English and Russian 0.3.1 entries agree |
+| Automated checks | Modern, API, headless and retro checks pass |
+| Artifact set | Exactly 19 runtime JARs, no stale or development files |
+| Manual evidence | Claimed client/server scenarios recorded against candidate SHA-256 |
+| Platform wording | Incomplete Linux/macOS coverage remains marked experimental |
+| Legal files | License, notice and third-party records match packaged code |
+| Approval | Project owner explicitly authorizes publication |
 
-| File | Loader metadata | Game versions | Required dependency |
-| --- | --- | --- | --- |
-| `e4steam-fabric-<version>-mc1.17-1.18.2.jar` | Fabric and Quilt | 1.17–1.18.2 | Fabric API |
-| `e4steam-forge-<version>-legacy17.jar` | Forge | 1.17.1–1.18.1 | None |
-| `e4steam-fabric-<version>.jar` | Fabric and Quilt | 1.19–1.21.11 | Fabric API |
-| `e4steam-fabric-<version>-modern.jar` | Fabric and Quilt | 26.1–26.2 | Fabric API |
-| `e4steam-forge-<version>.jar` | Forge | 1.18.2–1.20.2 | None |
-| `e4steam-neoforge-<version>.jar` | NeoForge | 1.20.2–26.2 | None |
+If a gate fails, fix it or narrow the claim. Do not rename an untested candidate
+to “release” to bypass missing evidence.
 
-Use release channel **Release**, environment **Client required / Server
-unsupported**. Do not upload `dev-shadow`, `sources`, `unstubbed`, or
-root-project JARs. Forge 1.17.0 has no supported loader target, so the legacy
-Forge range begins at 1.17.1.
+## Release order
 
-Do not create OS-specific duplicates. Every runtime JAR contains both the
-Windows x64 (`steam_api64.dll`, `steamworks4j64.dll`) and Linux x64
-(`libsteam_api.so`, `libsteamworks4j.so`) native libraries and selects the
-correct pair at runtime.
+1. Finish both the English and Russian entries in `CHANGELOG.md`.
+2. Record automated and manual evidence in `COMPATIBILITY.md`. A successful
+   compile or main-menu launch is not a multiplayer test.
+3. Run the modern, Addon API and retro checks below.
+4. Inspect every candidate JAR: metadata, classfile level, notices, native
+   libraries and SHA-256. Exclude development, sources, unstubbed and root
+   artifacts.
+5. Wait for the Windows, Linux, macOS Intel, macOS arm64 and retro CI jobs.
+6. Run the applicable two-instance Steam checks against the exact candidate
+   hashes. Keep Linux and macOS combinations marked experimental until their
+   results are recorded.
+7. Commit the final documentation and results, then create the annotated
+   `v<version>` tag from that commit. Publishing still requires the project
+   owner's explicit approval.
 
-## Compatibility verification
+## Modern runtime JARs
 
-Client launch testing and multiplayer testing are different gates:
+| Artifact | Loader and Minecraft range | Java |
+| --- | --- | --- |
+| `e4steam-fabric-quilt-mc1.17-1.18.2-v<version>.jar` | Fabric/Quilt 1.17-1.18.2 | 16 |
+| `e4steam-forge-mc1.17.1-1.18.1-v<version>.jar` | Forge 1.17.1-1.18.1 | 16/17 |
+| `e4steam-fabric-quilt-mc1.19-1.21.11-v<version>.jar` | Fabric/Quilt 1.19-1.21.11 | 17+ |
+| `e4steam-fabric-quilt-mc26.1-26.2-v<version>.jar` | Fabric/Quilt 26.1-26.2 | release metadata |
+| `e4steam-forge-mc1.18.2-1.20.2-v<version>.jar` | Forge 1.18.2-1.20.2 | 17 |
+| `e4steam-neoforge-mc1.20.2-26.2-v<version>.jar` | NeoForge 1.20.2-26.2 | 17+ |
 
-- client launch: Minecraft reaches the main menu with e4steam and required
-  dependencies loaded;
-- multiplayer: a host opens a world, a second Steam account joins, TCP traffic
-  works, the invitation path works, and configured UDP voice traffic is tested.
+Each JAR contains the pinned 64-bit Steamworks client and GameServer libraries
+for Windows, Linux and universal macOS x86_64/arm64. Do not publish separate OS
+copies. Fabric and Quilt still need the matching Fabric API.
 
-For a new release, retest the lower and upper boundary of every changed
-artifact. Record the Minecraft version, loader, Java version, operating system,
-host and guest result, invitation result, TCP result, UDP result, and date in
-`COMPATIBILITY.md`. Multiplayer confirmation remains a manual two-client test;
-unit tests and a successful main-menu launch do not replace it.
+The modern JARs contain both client and headless entrypoints. Publication
+metadata may claim dedicated-server support on Windows x64. Linux and macOS
+server claims must follow the manual evidence in `COMPATIBILITY.md`.
 
-## Listing disclosures
+## Retro runtime JARs
 
-The project page must state that e4steam is an unofficial derivative of e4mc,
-that both players need the mod and a signed-in Steam client, that traffic uses
-Steam P2P or Valve relays, that native Steamworks redistributables are bundled,
-and that App ID 480 is a shared test namespace used permanently by this fork.
+`./gradlew -p retro auditRetroArtifacts` builds 13 Java 8 candidates: ten Forge
+branch JARs for `1.7.x` through `1.16.x`, plus three Fabric branch JARs for
+`1.14.x` through `1.16.x`. Every filename must include the loader and public
+Minecraft branch. There is no all-retro JAR and no retro Quilt build.
 
-The public display name is **e4steam**. Identify **Kamilchik** as the project
-author and current maintainer, retain the e4mc fork attribution, and preserve
-the notices in `LICENSE` and `THIRD_PARTY_NOTICES.md`.
+Legacy Fabric and Ornithe for `1.7.10`-`1.13.2`, and Rift for `1.13.2`, are
+separate possible ports. They must not be presented as aliases for regular
+Fabric or Quilt.
 
-## Verification
+The root `releaseJars` task runs the retro audit and copies all 13 files next
+to the six modern JARs in `release/<version>`. The final directory must contain
+exactly 19 runtime JARs. Stale or unexpected files fail assembly.
+
+Forge `1.7.x` requires an external UniMixins `0.1.20` or newer JAR. e4steam
+must not embed UniMixins component mods because that creates duplicate mod IDs
+in existing packs.
+
+## Automated checks
 
 ```powershell
-.\gradlew.bat --no-daemon clean releaseJars
+.\gradlew.bat --no-daemon clean apiChecks test headlessEntrypointAudit releaseJars
+.\gradlew.bat --no-daemon -p retro clean auditRetroArtifacts
 git diff --check
-$releaseJars = Get-ChildItem release\0.2.0\*.jar
-if ($releaseJars.Count -ne 6) { throw "Expected 6 runtime JARs, found $($releaseJars.Count)" }
-$releaseJars | Get-FileHash -Algorithm SHA256
 ```
 
-For Shift+Tab, launch the Minecraft launcher through a Steam non-Steam shortcut
-and verify that the in-game invitation action opens the Steam overlay.
+Also inspect the candidate JARs with the repository's Minecraft-mod inspector,
+review `docs/DEPENDENCY_LICENSE_REPORT.md` and scan release files for secrets or
+private certificates. Record failed, skipped and assumed checks as clearly as
+successful ones. Pull-request CI never publishes artifacts.
+
+If a check fails, keep the first meaningful error and the task name. Re-running
+until a flaky result turns green is not evidence unless the flake is understood
+and documented.
+
+## Manual candidate checks
+
+- modern integrated world: launch, open world, friends/invite and address join,
+  TCP, configured UDP, addon compatibility, disconnect and reconnect;
+- macOS: repeat on native Intel and native arm64 JVMs; a Rosetta result is a
+  separate fallback result, not proof of native arm64 support;
+- dedicated server: anonymous GameServer startup, automatic descriptor, two
+  clients, stable identities, access rules, direct TCP rejection, stale/replay
+  handling, reconnect, capacity and graceful drain;
+- retro: run the baseline for every branch artifact claimed in the release.
+
+Record Minecraft, loader, Java, OS/architecture, participant roles, candidate
+SHA-256, date and result. Do not publish Steam IDs, auth tickets, GSLT, join
+secrets or raw logs.
+
+The candidate hash matters: rebuilding after a manual test creates a different
+artifact and invalidates that test until the new hash is checked again.
+
+## Listing and legal notes
+
+Public descriptions must say that e4steam is an unofficial e4mc derivative,
+uses Steam P2P or Valve relays, and shares Valve's test App ID 480. Integrated-
+world players need matching e4steam builds and signed-in Steam clients. The
+dedicated server itself uses anonymous GameServer login.
+
+Keep `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md` and e4mc-retro attribution
+with every source and binary release. Valve Steamworks redistributables retain
+their own terms and are not relicensed under Apache 2.0.
+
+API contracts for Public Worlds, automatic modpack installation, Offline Skins
+and World Settings are not proof that those features ship in core. Advertise
+them only when a separate released addon actually provides them.

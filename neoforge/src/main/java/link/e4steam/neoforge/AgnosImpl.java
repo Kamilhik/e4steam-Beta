@@ -1,6 +1,6 @@
 package link.e4steam.neoforge;
 
-import link.e4steam.E4steamClient;
+import link.e4steam.E4steamConstants;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.fml.loading.FMLLoader;
@@ -25,15 +25,27 @@ public class AgnosImpl {
         return FMLPaths.CONFIGDIR.get();
     }
 
+    public static boolean proactivelyAcceptSteamPeerSessions() {
+        return true;
+    }
+
+    public static boolean autoRestartBrokenSteamSessionForHandshake() {
+        return false;
+    }
+
+    public static boolean paceMinecraftTrafficForLoader() {
+        return false;
+    }
+
     public static Path jarPath() {
         var clazz = FMLLoader.class;
         try {
             var modList = (LoadingModList) clazz.getMethod("getLoadingModList").invoke(clazz.getMethod("getCurrent").invoke(null));
-            return modList.getModFileById(E4steamClient.MOD_ID).getFile().getFilePath();
+            return modList.getModFileById(E4steamConstants.MOD_ID).getFile().getFilePath();
         } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException | NullPointerException ignored) {}
         try {
             var modList = (LoadingModList) clazz.getMethod("getLoadingModList").invoke(null);
-            return modList.getModFileById(E4steamClient.MOD_ID).getFile().getFilePath();
+            return modList.getModFileById(E4steamConstants.MOD_ID).getFile().getFilePath();
         } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException | NullPointerException ignored) {}
         throw new RuntimeException("Can't determine jar path!");
     }

@@ -65,7 +65,7 @@ public final class SteamClientBridge {
     public static void cancelPending() {
         PendingAccept[] pending;
         synchronized (PENDING_LOCK) {
-            pending = PENDING_ACCEPTS.toArray(PendingAccept[]::new);
+            pending = PENDING_ACCEPTS.toArray(new PendingAccept[PENDING_ACCEPTS.size()]);
             PENDING_ACCEPTS.clear();
         }
         for (PendingAccept accept : pending) {
@@ -83,8 +83,8 @@ public final class SteamClientBridge {
         SteamConnectionBridge bridge = null;
         SteamRuntime.Activity activity = null;
         boolean handedOff = false;
-        try (listener) {
-            socket = listener.accept();
+        try (ServerSocket closeableListener = listener) {
+            socket = closeableListener.accept();
             socket.setTcpNoDelay(true);
             socket.setKeepAlive(true);
 
@@ -97,7 +97,11 @@ public final class SteamClientBridge {
             int connectionId = runtime.nextConnectionId(address.steamId());
             bridge = runtime.registerClientBridge(address.steamId(), connectionId, socket, activity);
             activity = null;
-            bridge.startClientHandshake(address.token());
+            if (!runtime.sendOpen(bridge, address.token())) {
+                throw new IOException("Steam outbound queue is unavailable");
+            }
+            SteamAddonHooks.bridgeReady(bridge);
+            bridge.start();
             handedOff = true;
             E4steamClient.LOGGER.info(
                     "Opened a local Minecraft bridge to Steam user {}",

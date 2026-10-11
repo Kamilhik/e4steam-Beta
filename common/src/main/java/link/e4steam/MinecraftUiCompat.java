@@ -2,15 +2,14 @@ package link.e4steam;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.multiplayer.resolver.ServerAddress;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
@@ -48,35 +47,6 @@ public final class MinecraftUiCompat {
     private MinecraftUiCompat() {
     }
 
-    /** Creates namespaced resource identifiers across the 1.21 constructor change. */
-    public static ResourceLocation resourceLocation(String namespace, String path) {
-        for (String factoryName : new String[]{"fromNamespaceAndPath", "tryBuild"}) {
-            try {
-                Method factory = ResourceLocation.class.getMethod(
-                        factoryName, String.class, String.class
-                );
-                Object created = factory.invoke(null, namespace, path);
-                if (created instanceof ResourceLocation location) {
-                    return location;
-                }
-            } catch (ReflectiveOperationException | RuntimeException ignored) {
-                // Older Minecraft versions expose the public constructor.
-            }
-        }
-        try {
-            Constructor<ResourceLocation> constructor = ResourceLocation.class.getConstructor(
-                    String.class, String.class
-            );
-            return constructor.newInstance(namespace, path);
-        } catch (ReflectiveOperationException | RuntimeException failure) {
-            throw new IllegalStateException(
-                    "No compatible ResourceLocation factory was found for "
-                            + namespace + ':' + path,
-                    failure
-            );
-        }
-    }
-
     public static Button button(
             Component message,
             Consumer<Button> onPress,
@@ -96,46 +66,6 @@ public final class MinecraftUiCompat {
         }
 
         throw new IllegalStateException("No compatible Minecraft Button factory was found");
-    }
-
-    /** Creates the 26.x native SpriteIconButton and falls back to a compact text icon. */
-    public static Button iconButton(
-            Component fallbackIcon,
-            Component tooltip,
-            Consumer<Button> onPress,
-            int x,
-            int y,
-            int width,
-            int height,
-            String sprite,
-            int spriteWidth,
-            int spriteHeight
-    ) {
-        if (MinecraftVersion.current().startsWith("26.")) {
-            try {
-                Class<?> factory = Class.forName("link.e4steam.FriendsUi26Widgets");
-                Method method = factory.getMethod(
-                        "iconButton",
-                        Component.class,
-                        Consumer.class,
-                        int.class,
-                        int.class,
-                        int.class,
-                        int.class,
-                        String.class,
-                        int.class,
-                        int.class
-                );
-                return (Button) method.invoke(
-                        null, tooltip, onPress, x, y, width, height, sprite, spriteWidth, spriteHeight
-                );
-            } catch (ReflectiveOperationException | RuntimeException ignored) {
-                // The normal button below remains functional on snapshots with another widget API.
-            }
-        }
-        Button button = button(fallbackIcon, onPress, x, y, width, height);
-        tooltip(button, tooltip);
-        return button;
     }
 
     /**
@@ -163,23 +93,6 @@ public final class MinecraftUiCompat {
                 continue;
             }
             return;
-        }
-    }
-
-    /** Sets the EditBox placeholder across pre-hint and modern GUI versions. */
-    public static void editBoxHint(EditBox editBox, Component hint) {
-        try {
-            Method setHint = editBox.getClass().getMethod("setHint", Component.class);
-            setHint.invoke(editBox, hint);
-            return;
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            // Minecraft 1.17-1.18 calls this a String suggestion.
-        }
-        try {
-            Method setSuggestion = editBox.getClass().getMethod("setSuggestion", String.class);
-            setSuggestion.invoke(editBox, hint.getString());
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            // Placeholder text is cosmetic; typing and filtering still work.
         }
     }
 
@@ -214,73 +127,118 @@ public final class MinecraftUiCompat {
         return fallback;
     }
 
-    /** Opens a screen across pre-26 Minecraft#setScreen and 26.x Gui#setScreen ownership. */
-    public static void setScreen(Minecraft minecraft, Screen screen) {
-        if (!MinecraftVersion.current().startsWith("26.")) {
-            minecraft.setScreen(screen);
-            return;
-        }
-        Class<?> type = minecraft.getClass();
-        while (type != null) {
-            for (java.lang.reflect.Field field : type.getDeclaredFields()) {
-                if (Modifier.isStatic(field.getModifiers())
-                        || !field.getType().getName().equals("net.minecraft.client.gui.Gui")) {
-                    continue;
-                }
-                try {
-                    field.setAccessible(true);
-                    Object gui = field.get(minecraft);
-                    if (gui == null) {
-                        continue;
-                    }
-                    for (Method method : gui.getClass().getMethods()) {
-                        if (!Modifier.isStatic(method.getModifiers())
-                                && method.getReturnType() == void.class
-                                && method.getParameterCount() == 1
-                                && method.getParameterTypes()[0] == Screen.class) {
-                            method.invoke(gui, screen);
-                            return;
-                        }
-                    }
-                } catch (ReflectiveOperationException | RuntimeException ignored) {
-                    // Try another Gui field or superclass.
-                }
+    /**
+     * Reads the active screen across the Minecraft 26.x move from
+     * {@code Minecraft.screen} to {@code Minecraft.gui.screen()}.
+     */
+    public static Screen currentScreen(Minecraft minecraft) {
+        try {
+            return minecraft.screen;
+        } catch (NoSuchFieldError ignored) {
+            try {
+                Method getter = minecraft.gui.getClass().getMethod("screen");
+                return (Screen) getter.invoke(minecraft.gui);
+            } catch (ReflectiveOperationException failure) {
+                throw new IllegalStateException("No compatible current-screen accessor was found", failure);
             }
-            type = type.getSuperclass();
         }
-        throw new IllegalStateException("Could not locate Minecraft 26.x screen controller");
     }
 
-    /** Reads the active screen across pre-26 Minecraft#screen and 26.x Gui#screen ownership. */
-    public static Screen currentScreen(Minecraft minecraft) {
-        if (!MinecraftVersion.current().startsWith("26.")) {
-            return minecraft.screen;
+    /** Opens a screen across the Minecraft 26.x setScreenAndShow rename. */
+    public static void setScreen(Minecraft minecraft, Screen screen) {
+        try {
+            minecraft.setScreen(screen);
+        } catch (NoSuchMethodError ignored) {
+            try {
+                Method setter = minecraft.getClass().getMethod("setScreenAndShow", Screen.class);
+                setter.invoke(minecraft, screen);
+            } catch (ReflectiveOperationException failure) {
+                throw new IllegalStateException("No compatible screen setter was found", failure);
+            }
         }
-        Class<?> type = minecraft.getClass();
-        while (type != null) {
-            for (java.lang.reflect.Field field : type.getDeclaredFields()) {
-                if (Modifier.isStatic(field.getModifiers())
-                        || !field.getType().getName().equals("net.minecraft.client.gui.Gui")) {
-                    continue;
-                }
+    }
+
+    /** Adds a chat message across the Minecraft 26.x chat method rename. */
+    public static void addChatMessage(Minecraft minecraft, Component message) {
+        try {
+            minecraft.gui.getChat().addMessage(message);
+        } catch (NoSuchMethodError ignored) {
+            try {
+                Object chat = resolveChatComponent(minecraft.gui);
+                invokeChatMessage(chat, message);
+            } catch (ReflectiveOperationException failure) {
+                throw new IllegalStateException("No compatible chat message API was found", failure);
+            }
+        }
+    }
+
+    /** Resolves both the direct Gui chat and versions with a nested HUD. */
+    static Object resolveChatComponent(Object gui) throws ReflectiveOperationException {
+        try {
+            return readZeroArgumentMember(gui, "getChat", "chat");
+        } catch (NoSuchFieldException directChatMissing) {
+            Object hud = readZeroArgumentMember(gui, "hud", "getHud");
+            try {
+                return readZeroArgumentMember(hud, "getChat", "chat");
+            } catch (ReflectiveOperationException nestedChatMissing) {
+                nestedChatMissing.addSuppressed(directChatMissing);
+                throw nestedChatMissing;
+            }
+        }
+    }
+
+    static void invokeChatMessage(Object chat, Component message)
+            throws ReflectiveOperationException {
+        Method addMessage = Arrays.stream(chat.getClass().getMethods())
+                .filter(method -> method.getName().equals("addClientSystemMessage")
+                        || method.getName().equals("addMessage"))
+                .filter(method -> method.getParameterCount() == 1)
+                .filter(method -> method.getParameterTypes()[0].isAssignableFrom(message.getClass()))
+                .findFirst()
+                .orElseThrow(() -> new NoSuchMethodException("ChatComponent system-message method"));
+        addMessage.invoke(chat, message);
+    }
+
+    /**
+     * Reads a zero-argument accessor or field without requiring the member to
+     * be public. Minecraft 26.1 keeps the HUD behind a non-public member, while
+     * adjacent versions expose an accessor instead.
+     */
+    static Object readZeroArgumentMember(Object owner, String... names)
+            throws ReflectiveOperationException {
+        if (owner == null) {
+            throw new NoSuchFieldException("Cannot read a member from null");
+        }
+        for (String name : names) {
+            try {
+                return owner.getClass().getMethod(name).invoke(owner);
+            } catch (NoSuchMethodException ignored) {
+                // The member can be package-private/private in newer clients.
+            }
+
+            for (Class<?> type = owner.getClass(); type != null; type = type.getSuperclass()) {
                 try {
-                    field.setAccessible(true);
-                    Object gui = field.get(minecraft);
-                    if (gui == null) continue;
-                    for (Method method : gui.getClass().getMethods()) {
-                        if (!Modifier.isStatic(method.getModifiers())
-                                && method.getParameterCount() == 0
-                                && Screen.class.isAssignableFrom(method.getReturnType())) {
-                            return (Screen) method.invoke(gui);
-                        }
-                    }
-                } catch (ReflectiveOperationException | RuntimeException ignored) {
-                    // Try another Gui field or superclass.
+                    Method method = type.getDeclaredMethod(name);
+                    method.setAccessible(true);
+                    return method.invoke(owner);
+                } catch (NoSuchMethodException ignored) {
+                    // Continue through the hierarchy, then try a field.
                 }
             }
-            type = type.getSuperclass();
+
+            for (Class<?> type = owner.getClass(); type != null; type = type.getSuperclass()) {
+                try {
+                    Field field = type.getDeclaredField(name);
+                    field.setAccessible(true);
+                    return field.get(owner);
+                } catch (NoSuchFieldException ignored) {
+                    // Continue through the hierarchy and then try the next name.
+                }
+            }
         }
-        return null;
+        throw new NoSuchFieldException(
+                "None of the compatible members exist: " + Arrays.toString(names)
+        );
     }
 
     /**

@@ -4,6 +4,7 @@ import com.mojang.brigadier.builder.ArgumentBuilder;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import link.e4steam.Agnos;
+import link.e4steam.Config;
 import link.e4steam.Mirror;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.server.commands.PardonCommand;
@@ -15,14 +16,16 @@ import java.util.function.Predicate;
 
 @Mixin(PardonCommand.class)
 public class PardonCommandMixin {
-    @Redirect(method = "register", at = @At(value = "INVOKE", target = "Lcom/mojang/brigadier/builder/LiteralArgumentBuilder;requires(Ljava/util/function/Predicate;)Lcom/mojang/brigadier/builder/ArgumentBuilder;"), require = 0)
+    @Redirect(method = "register", at = @At(value = "INVOKE", target = "Lcom/mojang/brigadier/builder/LiteralArgumentBuilder;requires(Ljava/util/function/Predicate;)Lcom/mojang/brigadier/builder/ArgumentBuilder;"))
     private static ArgumentBuilder<CommandSourceStack, LiteralArgumentBuilder<CommandSourceStack>> allowOwner(LiteralArgumentBuilder<CommandSourceStack> instance, Predicate<CommandSourceStack> predicate) {
         return instance.requires(src -> {
             try {
-                if (Agnos.isClient()
-                        && Mirror.isSingleplayerOwner(src.getServer(), src.getPlayerOrException()))
+                if (!Agnos.isClient() || !Config.INSTANCE.restoreDedicatedCommands.value()) {
+                    return predicate.test(src);
+                }
+                if (Mirror.isSingleplayerOwner(src.getServer(), src.getPlayerOrException()))
                     return true;
-            } catch (CommandSyntaxException | RuntimeException | LinkageError ignored) {
+            } catch (CommandSyntaxException ignored) {
             }
             return predicate.test(src);
         });

@@ -4,6 +4,8 @@ import link.e4steam.E4steamClient;
 import link.e4steam.MinecraftUiCompat;
 import link.e4steam.steam.SteamAddress;
 import link.e4steam.steam.SteamClientBridge;
+import link.e4steam.steam.SteamDedicatedAddress;
+import link.e4steam.steam.SteamDedicatedClientBridge;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.multiplayer.resolver.ResolvedServerAddress;
@@ -32,9 +34,11 @@ public class ServerNameResolverMixin {
             ServerAddress serverAddress
     ) {
         Optional<SteamAddress> steamAddress = SteamAddress.tryParse(serverAddress.getHost());
-        if (steamAddress.isEmpty()) {
-            // Server-list pings also use this resolver. Only stop Spacewar
-            // while Minecraft is actually on its connection screen.
+        Optional<SteamDedicatedAddress> dedicatedAddress =
+                SteamDedicatedAddress.tryParse(serverAddress.getHost());
+        if (steamAddress.isEmpty() && dedicatedAddress.isEmpty()) {
+            // Server-list pings also use this resolver. Only stop an active
+            // e4steam sharing session on Minecraft's connection screen.
             Minecraft minecraft = Minecraft.getInstance();
             if (MinecraftUiCompat.currentScreen(minecraft) instanceof ConnectScreen) {
                 E4steamClient.stopSteamForDirectServerConnection();
@@ -42,13 +46,24 @@ public class ServerNameResolverMixin {
             return instance.resolve(serverAddress);
         }
 
+        // Server-list status pings use the same resolver as a real join.
+        // Opening a Steam bridge for a ping creates a throwaway connection
+        // immediately before the user's actual connection and can poison the
+        // implicit ISteamNetworkingMessages route (especially on 26.2).
+        // ConnectScreen is present only for the real Minecraft connection.
+        Minecraft minecraft = Minecraft.getInstance();
+        if (!(MinecraftUiCompat.currentScreen(minecraft) instanceof ConnectScreen)) {
+            return Optional.empty();
+        }
+
         try {
-            InetSocketAddress localAddress = SteamClientBridge.open(steamAddress.get());
+            InetSocketAddress localAddress = steamAddress.isPresent()
+                    ? SteamClientBridge.open(steamAddress.get())
+                    : SteamDedicatedClientBridge.open(dedicatedAddress.get());
             return Optional.of(ResolvedServerAddress.from(localAddress));
         } catch (IOException exception) {
             E4steamClient.LOGGER.error(
-                    "Failed to create the local Steam bridge for Steam user {}",
-                    Long.toUnsignedString(steamAddress.get().steamId()),
+                    "Failed to create the local Steam bridge for an e4steam endpoint",
                     exception
             );
             return Optional.empty();

@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "minVersion": "0.7.11",
+  "package": "link.e4steam.retro.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "mixins": [
+    "NetHandlerLoginServerMixin",
+    "NetworkSystemLanMixin"
+  ],
+  "client": [
+    "GuiConnectingAddressMixin",
+    "IntegratedServerLanRetroMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

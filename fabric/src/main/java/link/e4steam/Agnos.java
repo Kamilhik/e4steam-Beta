@@ -15,6 +15,18 @@ public class Agnos {
     }
 
     public static Path jarPath() {
-        return FabricLoader.getInstance().getModContainer(E4steamClient.MOD_ID).get().getOrigin().getPaths().get(0);
+        return FabricLoader.getInstance().getModContainer(E4steamConstants.MOD_ID).get().getOrigin().getPaths().get(0);
+    }
+
+    public static boolean proactivelyAcceptSteamPeerSessions() {
+        return true;
+    }
+
+    public static boolean autoRestartBrokenSteamSessionForHandshake() {
+        return false;
+    }
+
+    public static boolean paceMinecraftTrafficForLoader() {
+        return false;
     }
 }

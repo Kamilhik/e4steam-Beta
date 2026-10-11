@@ -4,8 +4,15 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import link.e4steam.steam.SteamAccessMode;
 import link.e4steam.steam.SteamAddress;
+import link.e4steam.steam.SteamDedicatedAddress;
+import link.e4steam.steam.SteamClientApiAdapter;
 import link.e4steam.steam.SteamRuntime;
 import link.e4steam.steam.SteamSession;
+import link.e4steam.internal.addon.AddonCandidate;
+import link.e4steam.internal.api.CoreApiPlatform;
+import link.e4steam.internal.api.RuntimeEnvironment;
+import link.e4steam.api.runtime.RuntimeMode;
+import link.e4steam.lan.ModernLanSettings;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.gui.screens.ConnectScreen;
@@ -22,84 +29,68 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.CompletionException;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class E4steamClient {
-    public static final String MOD_ID = "e4steam";
+    public static final String MOD_ID = E4steamConstants.MOD_ID;
     public static volatile SteamSession session;
     public static volatile SteamAccessMode selectedAccessMode = SteamAccessMode.FRIENDS_ONLY;
+    /** Namespaced addon mode selected alongside {@link #selectedAccessMode}. */
+    public static volatile String selectedCustomAccessMode = "";
+    private static final Set<String> CONFIRMED_CUSTOM_ACCESS =
+            Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     public static final Logger LOGGER = LoggerFactory.getLogger(E4steamClient.MOD_ID);
-    private static final Object SOCIAL_PRESENCE_LOCK = new Object();
-    private static SteamRuntime.Activity socialPresenceActivity;
+
+    public static boolean customAccessConfirmed(String modeId) {
+        return modeId != null && CONFIRMED_CUSTOM_ACCESS.contains(modeId);
+    }
+
+    public static void confirmCustomAccess(String modeId) {
+        if (modeId != null && !modeId.isEmpty()) CONFIRMED_CUSTOM_ACCESS.add(modeId);
+    }
 
     public static void init() {
+        init(new RuntimeEnvironment("unknown", "unknown", "unknown", RuntimeMode.CLIENT, true),
+                Collections.emptyList());
+    }
+
+    /** Initializes the stable addon platform from entry points already discovered by the loader. */
+    public static void init(RuntimeEnvironment environment, List<AddonCandidate> addons) {
+        // Overlay injection must happen before Minecraft creates its LWJGL
+        // window. The call is a no-op outside the Unix overlay relaunch path.
+        SteamRuntime.relaunchForOverlayIfNeeded();
         Config.INSTANCE.id(); // Touch to initialize for McQoy
-    }
-
-    public static boolean isHostEnabled() {
-        return Config.INSTANCE.hostEnabled.value();
-    }
-
-    /** Keeps Steam social presence and incoming e4steam invitation signals active. */
-    public static void ensureSocialPresence() {
-        synchronized (SOCIAL_PRESENCE_LOCK) {
-            if (socialPresenceActivity != null) return;
-            SteamRuntime runtime = SteamRuntime.get();
-            SteamRuntime.Activity acquired;
-            try {
-                acquired = runtime.acquireActivity();
-            } catch (RuntimeException failure) {
-                LOGGER.debug("Steam social presence is unavailable", failure);
-                return;
-            }
-            socialPresenceActivity = acquired;
-            runtime.ensureSocialPresenceAsync().exceptionally(failure -> {
-                synchronized (SOCIAL_PRESENCE_LOCK) {
-                    if (socialPresenceActivity == acquired) {
-                        socialPresenceActivity = null;
-                        acquired.close();
-                    }
-                }
-                LOGGER.debug("Could not publish Steam social presence", failure);
-                return null;
-            });
-        }
-    }
-
-    private static void stopSocialPresence() {
-        SteamRuntime.Activity closing;
-        synchronized (SOCIAL_PRESENCE_LOCK) {
-            closing = socialPresenceActivity;
-            socialPresenceActivity = null;
-        }
-        if (closing != null) closing.close();
+        ModernLanSettings.initialize();
+        SteamRuntime.preloadCompatibilityClasses();
+        SteamClientApiAdapter.install();
+        CoreApiPlatform.start(environment, addons);
+        SteamRuntime.get().startAtGameLaunchAsync();
     }
 
     public static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
         if (Config.INSTANCE.restoreDedicatedCommands.value() && Agnos.isClient()) {
-            OptionalCompatibility.run("restored-integrated-server-commands", () -> {
-                BanListCommands.register(dispatcher);
-                BanPlayerCommands.register(dispatcher);
-                PardonCommand.register(dispatcher);
-                WhitelistCommand.register(dispatcher);
-            });
-        }
-        OptionalCompatibility.run("e4steam-commands", () -> registerE4steamCommands(dispatcher));
-    }
+            BanListCommands.register(dispatcher);
+            BanPlayerCommands.register(dispatcher);
+            PardonCommand.register(dispatcher);
 
-    private static void registerE4steamCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
+        }
         dispatcher.register(
                 Commands.literal("e4steam")
                         .requires(src -> {
-                            if (src.getServer() == null || src.getServer().isDedicatedServer()) {
+                            if (src.getServer() == null) {
                                 return false;
                             }
-                            try {
-                                return Mirror.isSingleplayerOwner(
-                                        src.getServer(), src.getPlayerOrException()
-                                );
-                            } catch (CommandSyntaxException | RuntimeException failure) {
-                                LOGGER.debug("Could not verify the integrated-server owner", failure);
-                                return false;
+                            if (src.getServer().isDedicatedServer()) {
+                                return CommandPermissionCompat.hasPermission(src, 4);
+                            } else {
+                                try {
+                                    return Mirror.isSingleplayerOwner(src.getServer(), src.getPlayerOrException());
+                                } catch (CommandSyntaxException e) {
+                                    return false;
+                                }
                             }
                         })
                         .then(Commands.literal("stop").executes(ctx -> {
@@ -145,7 +136,7 @@ public class E4steamClient {
                                 Mirror.sendSuccessToSource(ctx.getSource(), Mirror.translatable("text.e4steam_minecraft.doctor.start"));
                                 var diag = Doctor.doctor();
                                 LOGGER.info("e4steam doctor report:\n{}", diag);
-                                Mirror.sendSuccessToSource(ctx.getSource(), Mirror.literal(diag));
+                                Mirror.sendSuccessToSource(ctx.getSource(), Mirror.literal(Doctor.chatSummary()));
                             }, "e4steam-steam-doctor");
                             thread.setDaemon(true);
                             thread.start();
@@ -223,14 +214,14 @@ public class E4steamClient {
     }
 
     private static void replaceAndStartSession(SteamSession previous) {
-        SteamSession replacement = new SteamSession(previous.localPort(), previous.accessMode());
+        SteamSession replacement = new SteamSession(previous.localPort(), previous.accessMode(),
+                previous.customAccessModeId());
         session = replacement;
         replacement.startAsync();
     }
 
-    /** Stops Spacewar before Minecraft connects to a regular, non-e4steam server. */
+    /** Stops active e4steam sharing before Minecraft connects to a regular server. */
     public static void stopSteamForDirectServerConnection() {
-        stopSocialPresence();
         SteamSession current = session;
         if (current != null) {
             current.stop();
@@ -241,46 +232,19 @@ public class E4steamClient {
         SteamRuntime.get().stopForDirectServerConnection();
     }
 
-    /** Stops every e4steam activity before Minecraft begins its final world disconnect. */
-    public static void shutdown() {
-        stopSocialPresence();
-        SteamSession current = session;
-        session = null;
-        if (current != null) {
-            current.stop();
-        }
-        SteamRuntime.get().shutdown();
-    }
-
-    /** Transfers an invitation notification from the Steam worker to Minecraft's client thread. */
-    public static void showSteamInvitationToast(
-            long lobbyId,
-            long friendSteamId,
-            String friendName,
-            String minecraftName,
-            long invitationGeneration
-    ) {
-        Minecraft minecraft = Minecraft.getInstance();
-        minecraft.execute(() -> SteamFriendsScreens.showInvitationToast(
-                lobbyId, friendSteamId, friendName, minecraftName, invitationGeneration
-        ));
-    }
-
-    public static void showSteamJoinRequestToast(
-            long friendSteamId,
-            String friendName,
-            String minecraftName,
-            long requestGeneration
-    ) {
-        Minecraft minecraft = Minecraft.getInstance();
-        minecraft.execute(() -> SteamFriendsScreens.showJoinRequestToast(
-                friendSteamId, friendName, minecraftName, requestGeneration
-        ));
-    }
-
     /** Called by the Steam callback thread after a validated lobby invitation was accepted. */
     public static void acceptSteamInvite(String endpoint, String hostName) {
-        if (SteamAddress.tryParse(endpoint).isEmpty()) {
+        acceptSteamInvite(endpoint, hostName, true);
+    }
+
+    /** Called after a validated rich-presence address without a lobby join was accepted. */
+    public static void acceptDirectSteamInvite(String endpoint, String hostName) {
+        acceptSteamInvite(endpoint, hostName, false);
+    }
+
+    private static void acceptSteamInvite(String endpoint, String hostName, boolean lobbyBacked) {
+        if (SteamAddress.tryParse(endpoint).isEmpty()
+                && SteamDedicatedAddress.tryParse(endpoint).isEmpty()) {
             showSteamJoinFailure(Mirror.translatable("text.e4steam_minecraft.joinInvalidAddress"));
             return;
         }
@@ -289,15 +253,22 @@ public class E4steamClient {
         minecraft.execute(() -> {
             String displayName = normalizedHostName(hostName);
             if (MinecraftUiCompat.currentScreen(minecraft) instanceof ConnectScreen) {
-                SteamRuntime.get().cancelGuestJoin();
-                minecraft.gui.getChat().addMessage(
+                if (lobbyBacked) {
+                    SteamRuntime.get().cancelGuestJoin();
+                }
+                MinecraftUiCompat.addChatMessage(minecraft,
                         Mirror.translatable("text.e4steam_minecraft.joinAlreadyConnecting")
                 );
                 return;
             }
             if (minecraft.level == null) {
                 Screen parent = currentOrMultiplayerScreen(minecraft);
-                claimSteamInviteAndConnect(minecraft, endpoint, displayName, parent, null, false);
+                if (lobbyBacked) {
+                    claimSteamInviteAndConnect(minecraft, endpoint, displayName, parent, null, false);
+                } else {
+                    SteamRuntime.get().cancelGuestJoin();
+                    connectToSteamHost(minecraft, endpoint, displayName, parent);
+                }
                 return;
             }
 
@@ -306,7 +277,9 @@ public class E4steamClient {
             Component message = Mirror.translatable("text.e4steam_minecraft.joinInviteMessage", displayName);
             MinecraftUiCompat.setScreen(minecraft, new ConfirmScreen(confirmed -> {
                 if (!confirmed) {
-                    SteamRuntime.get().cancelGuestJoin();
+                    if (lobbyBacked) {
+                        SteamRuntime.get().cancelGuestJoin();
+                    }
                     MinecraftUiCompat.setScreen(minecraft, previousScreen);
                     return;
                 }
@@ -316,18 +289,46 @@ public class E4steamClient {
                         Mirror.translatable("connect.connecting"),
                         previousScreen
                 ));
-                claimSteamInviteAndConnect(
-                        minecraft,
-                        endpoint,
-                        displayName,
-                        returnScreen,
-                        previousScreen,
-                        true
-                );
+                if (lobbyBacked) {
+                    claimSteamInviteAndConnect(
+                            minecraft,
+                            endpoint,
+                            displayName,
+                            returnScreen,
+                            previousScreen,
+                            true
+                    );
+                } else {
+                    SteamRuntime.get().cancelGuestJoin();
+                    disconnectAndConnectDirectInvite(
+                            minecraft,
+                            endpoint,
+                            displayName,
+                            returnScreen,
+                            previousScreen
+                    );
+                }
             }, title, message,
                     Mirror.translatable("text.e4steam_minecraft.joinInviteConfirm"),
                     Mirror.translatable("text.e4steam_minecraft.joinInviteStay")));
         });
+    }
+
+    private static void disconnectAndConnectDirectInvite(
+            Minecraft minecraft,
+            String endpoint,
+            String hostName,
+            Screen parent,
+            Screen rejectionScreen
+    ) {
+        try {
+            MinecraftUiCompat.disconnect(minecraft, parent);
+            connectToSteamHost(minecraft, endpoint, hostName, parent);
+        } catch (ReflectiveOperationException exception) {
+            LOGGER.warn("Could not leave the current world for a Steam invitation", exception);
+            MinecraftUiCompat.setScreen(minecraft, rejectionScreen);
+            showSteamJoinFailure(exception.getMessage());
+        }
     }
 
     /** Displays an invitation/join error without touching Minecraft UI from a Steam callback thread. */
@@ -344,7 +345,7 @@ public class E4steamClient {
         Minecraft minecraft = Minecraft.getInstance();
         minecraft.execute(() -> {
             if (minecraft.level != null || MinecraftUiCompat.currentScreen(minecraft) instanceof ConnectScreen) {
-                minecraft.gui.getChat().addMessage(reason);
+                MinecraftUiCompat.addChatMessage(minecraft, reason);
                 return;
             }
 

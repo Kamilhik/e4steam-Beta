@@ -5,7 +5,8 @@ import com.sun.jna.Library;
 import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
-import link.e4steam.E4steamClient;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
 import java.nio.BufferOverflowException;
@@ -15,20 +16,25 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.ArrayDeque;
 
 /**
  * Packet-oriented transport backed by ISteamNetworkingMessages, the
  * connectionless facade over Steam Networking Sockets.
  */
 final class SteamNetworkingMessagesTransport implements AutoCloseable {
+    private static final Logger LOGGER = LogManager.getLogger("e4steam");
     private static final int STEAM_IDENTITY_TYPE = 16;
     private static final int STEAM_IDENTITY_SIZE = 136;
     private static final int STEAM_IDENTITY_VALUE_SIZE = Long.BYTES;
 
     private static final int RESULT_OK = 1;
+    private static final int CONFIG_SEND_RATE_MAX = 11;
+    private static final int SEND_RATE_CEILING = 4 * 1024 * 1024;
     private static final int SEND_NO_NAGLE = 1;
     private static final int SEND_NO_DELAY = 4;
     private static final int SEND_RELIABLE = 8;
+    private static final int SEND_AUTO_RESTART_BROKEN_SESSION = 32;
     private static final int SEND_UNRELIABLE_NO_DELAY = SEND_NO_NAGLE | SEND_NO_DELAY;
     private static final int SEND_RELIABLE_NO_NAGLE = SEND_RELIABLE | SEND_NO_NAGLE;
 
@@ -46,13 +52,24 @@ final class SteamNetworkingMessagesTransport implements AutoCloseable {
     private static final long STATUS_PENDING_UNRELIABLE_OFFSET = 36;
     private static final long STATUS_PENDING_RELIABLE_OFFSET = 40;
     private static final long STATUS_SENT_UNACKED_RELIABLE_OFFSET = 44;
+    private static final long STATUS_QUEUE_TIME_OFFSET = 48;
     private static final long REAL_TIME_STATUS_SIZE = 128;
 
     private static final long CONNECTION_INFO_END_REASON_OFFSET = 176;
     private static final long CONNECTION_INFO_END_DEBUG_OFFSET = 180;
     private static final int CONNECTION_INFO_END_DEBUG_SIZE = 128;
 
-    record Received(long remoteSteamId, int size) {
+    static final class Received {
+        private final long remoteSteamId;
+        private final int size;
+
+        Received(long remoteSteamId, int size) {
+            this.remoteSteamId = remoteSteamId;
+            this.size = size;
+        }
+
+        long remoteSteamId() { return remoteSteamId; }
+        int size() { return size; }
     }
 
     interface SessionListener {
@@ -74,6 +91,7 @@ final class SteamNetworkingMessagesTransport implements AutoCloseable {
     }
 
     interface NativeAccess {
+        default boolean setGlobalConfigInt32(int option, int value) { return false; }
         int send(Pointer identity, Pointer data, int size, int flags, int channel);
 
         int receive(int channel, Pointer[] messages, int maxMessages);
@@ -101,18 +119,36 @@ final class SteamNetworkingMessagesTransport implements AutoCloseable {
     private final SessionFailedCallback failedCallback = this::handleSessionFailed;
     private final DebugOutputCallback debugOutputCallback = this::handleDebugOutput;
 
-    private Pointer pendingMessage;
+    private static final int RECEIVE_BATCH_SIZE = 32;
+    private final ArrayDeque<Pointer> pendingMessages = new ArrayDeque<>(RECEIVE_BATCH_SIZE);
     private boolean closed;
 
     static SteamNetworkingMessagesTransport open(Path steamApiLibrary, SessionListener listener)
             throws IOException {
-        return new SteamNetworkingMessagesTransport(new JnaNativeAccess(steamApiLibrary), listener);
+        return new SteamNetworkingMessagesTransport(
+                new JnaNativeAccess(steamApiLibrary, false),
+                listener
+        );
+    }
+
+    static SteamNetworkingMessagesTransport openGameServer(
+            Path steamApiLibrary,
+            SessionListener listener
+    ) throws IOException {
+        return new SteamNetworkingMessagesTransport(
+                new JnaNativeAccess(steamApiLibrary, true),
+                listener
+        );
     }
 
     SteamNetworkingMessagesTransport(NativeAccess nativeAccess, SessionListener listener) {
         this.nativeAccess = Objects.requireNonNull(nativeAccess, "nativeAccess");
         this.listener = Objects.requireNonNull(listener, "listener");
         try {
+            // Only raise the ceiling, never the minimum: Steam retains congestion
+            // control on slower routes. Apply before any peer session is created.
+            boolean configured = nativeAccess.setGlobalConfigInt32(CONFIG_SEND_RATE_MAX, SEND_RATE_CEILING);
+            LOGGER.info("Steam send-rate ceiling: requested={} bytes/s, applied={}", SEND_RATE_CEILING, configured);
             nativeAccess.setCallbacks(requestCallback, failedCallback);
             nativeAccess.setDebugOutput(4, debugOutputCallback);
             nativeAccess.initializeRelayNetworkAccess();
@@ -133,7 +169,20 @@ final class SteamNetworkingMessagesTransport implements AutoCloseable {
 
     int sendResult(long remoteSteamId, ByteBuffer payload, boolean unreliable, int channel)
             throws IOException {
+        return sendResult(remoteSteamId, payload, unreliable, false, channel);
+    }
+
+    int sendResult(
+            long remoteSteamId,
+            ByteBuffer payload,
+            boolean unreliable,
+            boolean autoRestartBrokenSession,
+            int channel
+    ) throws IOException {
         ensureOpen();
+        if (unreliable && autoRestartBrokenSession) {
+            throw new IOException("A datagram cannot restart a broken reliable Steam session");
+        }
         if (!payload.isDirect()) {
             throw new IOException("Steam Networking Messages requires a direct send buffer");
         }
@@ -144,37 +193,44 @@ final class SteamNetworkingMessagesTransport implements AutoCloseable {
         }
         data = data.share(payload.position());
         int flags = unreliable ? SEND_UNRELIABLE_NO_DELAY : SEND_RELIABLE_NO_NAGLE;
+        if (autoRestartBrokenSession) {
+            flags |= SEND_AUTO_RESTART_BROKEN_SESSION;
+        }
         return nativeAccess.send(identity(remoteSteamId), data, size, flags, channel);
     }
 
     int availablePacketSize(int channel) throws IOException {
         ensureOpen();
-        if (pendingMessage == null) {
-            Pointer[] messages = new Pointer[1];
-            int count = nativeAccess.receive(channel, messages, 1);
-            if (count < 0 || count > 1) {
+        if (pendingMessages.isEmpty()) {
+            Pointer[] messages = new Pointer[RECEIVE_BATCH_SIZE];
+            int count = nativeAccess.receive(channel, messages, RECEIVE_BATCH_SIZE);
+            if (count < 0 || count > RECEIVE_BATCH_SIZE) {
                 throw new IOException("Steam returned an invalid received-message count: " + count);
             }
             if (count == 0) {
                 return 0;
             }
-            if (messages[0] == null) {
-                throw new IOException("Steam returned a null received message");
+            for (int index = 0; index < count; index++) {
+                if (messages[index] == null) {
+                    while (!pendingMessages.isEmpty()) {
+                        nativeAccess.releaseMessage(pendingMessages.removeFirst());
+                    }
+                    throw new IOException("Steam returned a null received message");
+                }
+                pendingMessages.addLast(messages[index]);
             }
-            pendingMessage = messages[0];
         }
+        Pointer pendingMessage = pendingMessages.peekFirst();
         int size = pendingMessage.getInt(MESSAGE_SIZE_OFFSET);
         if (size == 0) {
-            nativeAccess.releaseMessage(pendingMessage);
-            pendingMessage = null;
+            nativeAccess.releaseMessage(pendingMessages.removeFirst());
         }
         return size;
     }
 
     Received receive(ByteBuffer target, int channel) throws IOException {
         ensureOpen();
-        Pointer message = pendingMessage;
-        pendingMessage = null;
+        Pointer message = pendingMessages.pollFirst();
         if (message == null) {
             throw new IOException("No Steam Networking Messages packet is available on channel " + channel);
         }
@@ -196,6 +252,14 @@ final class SteamNetworkingMessagesTransport implements AutoCloseable {
             }
             return new Received(readSteamId(message.share(MESSAGE_IDENTITY_OFFSET)), size);
         } finally {
+            nativeAccess.releaseMessage(message);
+        }
+    }
+
+    void discardPendingMessage() throws IOException {
+        ensureOpen();
+        Pointer message = pendingMessages.pollFirst();
+        if (message != null) {
             nativeAccess.releaseMessage(message);
         }
     }
@@ -226,6 +290,42 @@ final class SteamNetworkingMessagesTransport implements AutoCloseable {
                 || realTimeStatus.getInt(STATUS_SENT_UNACKED_RELIABLE_OFFSET) > 0;
     }
 
+    /**
+     * Stops the Java bridge from blindly filling Steam's native reliable queue.
+     * Steam accepts reliable messages before they reach the wire, so a successful
+     * send alone is not evidence that the peer can consume another Forge chunk
+     * burst without adding seconds of latency.
+     */
+    boolean isReliableQueueBackpressured(
+            long remoteSteamId,
+            int maxPendingBytes,
+            long maxQueueMicros
+    ) {
+        if (closed) {
+            return true;
+        }
+        realTimeStatus.clear();
+        int state = nativeAccess.getSessionConnectionInfo(identity(remoteSteamId), realTimeStatus);
+        if (state <= 0) {
+            return false;
+        }
+        int pendingReliable = realTimeStatus.getInt(STATUS_PENDING_RELIABLE_OFFSET);
+        long queueMicros = realTimeStatus.getLong(STATUS_QUEUE_TIME_OFFSET);
+        return pendingReliable >= maxPendingBytes
+                || (queueMicros >= 0L && queueMicros >= maxQueueMicros);
+    }
+
+    String diagnosticState(long remoteSteamId) {
+        if (closed) return "closed";
+        realTimeStatus.clear();
+        int state = nativeAccess.getSessionConnectionInfo(identity(remoteSteamId), realTimeStatus);
+        return "state=" + state + ",pingMs=" + realTimeStatus.getInt(4)
+                + ",sendBytesPerSec=" + realTimeStatus.getInt(32)
+                + ",pendingReliable=" + realTimeStatus.getInt(STATUS_PENDING_RELIABLE_OFFSET)
+                + ",unackedReliable=" + realTimeStatus.getInt(STATUS_SENT_UNACKED_RELIABLE_OFFSET)
+                + ",queueMicros=" + realTimeStatus.getLong(STATUS_QUEUE_TIME_OFFSET);
+    }
+
     @Override
     public void close() {
         if (closed) {
@@ -234,9 +334,8 @@ final class SteamNetworkingMessagesTransport implements AutoCloseable {
         closed = true;
         nativeAccess.setCallbacks(null, null);
         nativeAccess.setDebugOutput(0, null);
-        Pointer message = pendingMessage;
-        pendingMessage = null;
-        if (message != null) {
+        Pointer message;
+        while ((message = pendingMessages.pollFirst()) != null) {
             nativeAccess.releaseMessage(message);
         }
         for (Memory identity : identities.values()) {
@@ -254,7 +353,7 @@ final class SteamNetworkingMessagesTransport implements AutoCloseable {
             try {
                 listener.onSessionRequest(remoteSteamId);
             } catch (Throwable throwable) {
-                E4steamClient.LOGGER.error("Steam session-request callback failed", throwable);
+                LOGGER.error("Steam session-request callback failed", throwable);
             }
         }
     }
@@ -276,19 +375,19 @@ final class SteamNetworkingMessagesTransport implements AutoCloseable {
         try {
             listener.onSessionFailed(remoteSteamId, endReason, detail);
         } catch (Throwable throwable) {
-            E4steamClient.LOGGER.error("Steam session-failure callback failed", throwable);
+            LOGGER.error("Steam session-failure callback failed", throwable);
         }
     }
 
     private void handleDebugOutput(int type, String message) {
-        if (message == null || message.isBlank()) {
+        if (message == null || message.trim().isEmpty()) {
             return;
         }
-        String clean = message.strip();
+        String clean = message.trim();
         if (type <= 2) {
-            E4steamClient.LOGGER.warn("Steam Networking Sockets: {}", clean);
+            LOGGER.warn("Steam Networking Sockets: {}", clean);
         } else {
-            E4steamClient.LOGGER.debug("Steam Networking Sockets: {}", clean);
+            LOGGER.debug("Steam Networking Sockets: {}", clean);
         }
     }
 
@@ -336,7 +435,10 @@ final class SteamNetworkingMessagesTransport implements AutoCloseable {
     }
 
     private interface FlatApi extends Library {
+        byte SteamAPI_ISteamNetworkingUtils_SetGlobalConfigValueInt32(Pointer self, int option, int value);
         Pointer SteamAPI_SteamNetworkingMessages_SteamAPI_v002();
+
+        Pointer SteamAPI_SteamGameServerNetworkingMessages_SteamAPI_v002();
 
         Pointer SteamAPI_SteamNetworkingUtils_SteamAPI_v004();
 
@@ -393,17 +495,34 @@ final class SteamNetworkingMessagesTransport implements AutoCloseable {
         private final Pointer messages;
         private final Pointer utils;
 
-        private JnaNativeAccess(Path steamApiLibrary) throws IOException {
+        private JnaNativeAccess(Path steamApiLibrary, boolean gameServer) throws IOException {
             Objects.requireNonNull(steamApiLibrary, "steamApiLibrary");
             try {
-                api = Native.load(steamApiLibrary.toAbsolutePath().normalize().toString(), FlatApi.class);
-                messages = api.SteamAPI_SteamNetworkingMessages_SteamAPI_v002();
+                // loadLibrary exists in both Minecraft's old bundled JNA 3.x
+                // and current JNA. Native.load was added later and crashes on
+                // Forge 1.7.10/1.8.9 when the launcher provides JNA first.
+                api = (FlatApi) Native.loadLibrary(
+                        steamApiLibrary.toAbsolutePath().normalize().toString(),
+                        FlatApi.class
+                );
+                messages = gameServer
+                        ? api.SteamAPI_SteamGameServerNetworkingMessages_SteamAPI_v002()
+                        : api.SteamAPI_SteamNetworkingMessages_SteamAPI_v002();
                 utils = api.SteamAPI_SteamNetworkingUtils_SteamAPI_v004();
             } catch (UnsatisfiedLinkError | RuntimeException exception) {
                 throw new IOException("Could not bind Steam Networking Messages", exception);
             }
             if (messages == null || utils == null) {
                 throw new IOException("Steam Networking Messages is unavailable after SteamAPI initialization");
+            }
+        }
+
+        @Override
+        public boolean setGlobalConfigInt32(int option, int value) {
+            try {
+                return api.SteamAPI_ISteamNetworkingUtils_SetGlobalConfigValueInt32(utils, option, value) != 0;
+            } catch (UnsatisfiedLinkError unavailable) {
+                return false;
             }
         }
 

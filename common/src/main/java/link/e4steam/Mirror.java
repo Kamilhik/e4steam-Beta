@@ -1,7 +1,6 @@
 package link.e4steam;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
@@ -88,20 +87,6 @@ public class Mirror {
             "isSingleplayerOwner",
             "method_19466",
             "m_7779_"
-    };
-    private static final String[] NAME_AND_ID_CLASS_NAMES = {
-            "net.minecraft.server.players.NameAndId"
-    };
-    private static final String[] PROFILE_ID_METHOD_NAMES = {
-            "id",     // authlib used by Minecraft 26.x
-            "getId"  // older authlib
-    };
-    private static final String[] PROFILE_NAME_METHOD_NAMES = {
-            "name",     // authlib used by Minecraft 26.x
-            "getName"  // older authlib
-    };
-    private static final String[] SINGLEPLAYER_PROFILE_METHOD_NAMES = {
-            "getSingleplayerProfile"
     };
     private static final String[] SET_USING_WHITELIST_METHOD_NAMES = {
             "setUsingWhiteList",
@@ -237,56 +222,24 @@ public class Mirror {
             try {
                 Method method = clazz.getMethod(methodName, Component.class, boolean.class);
                 method.invoke(source, message, true);
+                return;
             } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException ignored) {}
             try {
                 Method method = clazz.getMethod(methodName, Supplier.class, boolean.class);
                 method.invoke(source, (Supplier<Component>) () -> message, true);
+                return;
             } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException ignored) {}
         }
     }
 
     public static boolean isSingleplayerOwner(MinecraftServer server, ServerPlayer player) {
-        // This is the stable cross-version path.  Minecraft 26.x changed the
-        // parameter of MinecraftServer#isSingleplayerOwner from GameProfile to
-        // NameAndId, but the server still exposes its original owner profile.
-        // Comparing the profiles here also keeps this command unavailable to
-        // guests connected to the integrated LAN server.
-        Object ownerProfile = invokeProfileValue(server, SINGLEPLAYER_PROFILE_METHOD_NAMES);
-        Object playerProfile = player.getGameProfile();
-        if (ownerProfile != null && playerProfile != null) {
-            Object ownerId = invokeProfileValue(ownerProfile, PROFILE_ID_METHOD_NAMES);
-            Object playerId = invokeProfileValue(playerProfile, PROFILE_ID_METHOD_NAMES);
-            Object ownerName = invokeProfileValue(ownerProfile, PROFILE_NAME_METHOD_NAMES);
-            Object playerName = invokeProfileValue(playerProfile, PROFILE_NAME_METHOD_NAMES);
-            if (OfflineMinecraftProfile.sameLocalOwner(
-                    ownerId,
-                    ownerName instanceof String value ? value : null,
-                    playerId,
-                    playerName instanceof String value ? value : null
-            )) {
-                return true;
-            }
-        }
-
-        // Compatibility fallback for older or unusual server implementations.
         Class<ServerPlayer> clazz = ServerPlayer.class;
-        Object profile = playerProfile;
+        Object profile = player.getGameProfile();
         for (String methodName : NAME_AND_ID_METHOD_NAMES) {
             try {
                 Method method = clazz.getMethod(methodName);
                 profile = method.invoke(player);
             } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException ignored) {}
-        }
-        // Minecraft 26.x replaced the GameProfile parameter with NameAndId.
-        for (String className : NAME_AND_ID_CLASS_NAMES) {
-            try {
-                Class<?> nameAndIdClass = Class.forName(className);
-                Constructor<?> constructor = nameAndIdClass.getConstructor(profile.getClass());
-                profile = constructor.newInstance(profile);
-                break;
-            } catch (ClassNotFoundException | NoSuchMethodException | InstantiationException
-                     | IllegalAccessException | InvocationTargetException ignored) {
-            }
         }
         Class<MinecraftServer> clazz2 = MinecraftServer.class;
         for (String methodName : IS_SINGLEPLAYER_OWNER_METHOD_NAMES) {
@@ -296,16 +249,6 @@ public class Mirror {
             } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException ignored) {}
         }
         throw new RuntimeException("Could not locate any way to call isSingleplayerOwner!");
-    }
-
-    private static Object invokeProfileValue(Object profile, String[] methodNames) {
-        for (String methodName : methodNames) {
-            try {
-                return profile.getClass().getMethod(methodName).invoke(profile);
-            } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException ignored) {
-            }
-        }
-        return null;
     }
 
     public static boolean isSingleplayerOwnerObj(MinecraftServer server, Object maybeProfile) {
@@ -347,26 +290,9 @@ public class Mirror {
                 return;
             }
             try {
-                Minecraft.getInstance().gui.getChat().addMessage(message);
-            } catch (NoSuchMethodError e) {
-                ChatComponent chat;
-                try {
-                    chat = Minecraft.getInstance().gui.getChat();
-                } catch (NoSuchMethodError ex) {
-                    try {
-                        var gui = Minecraft.getInstance().gui;
-                        var hud = gui.getClass().getField("hud").get(gui);
-                        chat = (ChatComponent) hud.getClass().getMethod("getChat").invoke(hud);
-                    } catch (Throwable exc) {
-                        E4steamClient.LOGGER.error("Failed to get client chat!");
-                        return;
-                    }
-                }
-                try {
-                    chat.getClass().getMethod("addClientSystemMessage", Component.class).invoke(chat, message);
-                } catch (Exception ex) {
-                    E4steamClient.LOGGER.error("Failed to add message to client chat!");
-                }
+                MinecraftUiCompat.addChatMessage(Minecraft.getInstance(), message);
+            } catch (RuntimeException failure) {
+                E4steamClient.LOGGER.error("Failed to add message to client chat", failure);
             }
         });
     }

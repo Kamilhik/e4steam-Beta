@@ -14,10 +14,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Lifecycle for one Minecraft integrated-server LAN share. */
 public final class SteamSession {
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    private static final long HOST_LOBBY_START_TIMEOUT_SECONDS = 75;
 
     private final Object lifecycleLock = new Object();
     private final int localPort;
     private final SteamAccessMode accessMode;
+    private final String customAccessModeId;
     private final byte[] inviteToken = new byte[SteamAddress.TOKEN_LENGTH];
     private final AtomicBoolean startRequested = new AtomicBoolean();
 
@@ -31,11 +33,21 @@ public final class SteamSession {
     }
 
     public SteamSession(int localPort, SteamAccessMode accessMode) {
+        this(localPort, accessMode, "");
+    }
+
+    public SteamSession(int localPort, SteamAccessMode accessMode, String customAccessModeId) {
         if (localPort < 1 || localPort > 65535) {
             throw new IllegalArgumentException("Invalid LAN port: " + localPort);
         }
         this.localPort = localPort;
         this.accessMode = java.util.Objects.requireNonNull(accessMode, "accessMode");
+        String custom = customAccessModeId == null ? "" : customAccessModeId.trim();
+        if (accessMode == SteamAccessMode.CUSTOM
+                && !custom.matches("[a-z][a-z0-9_.-]{0,31}:[a-z][a-z0-9_.-]{0,63}")) {
+            throw new IllegalArgumentException("Invalid custom access mode");
+        }
+        this.customAccessModeId = accessMode == SteamAccessMode.CUSTOM ? custom : "";
         SECURE_RANDOM.nextBytes(inviteToken);
     }
 
@@ -50,6 +62,8 @@ public final class SteamSession {
     public SteamAccessMode accessMode() {
         return accessMode;
     }
+
+    public String customAccessModeId() { return customAccessModeId; }
 
     public void startAsync() {
         if (!startRequested.compareAndSet(false, true)) {
@@ -77,15 +91,19 @@ public final class SteamSession {
 
     public CompletableFuture<Void> openInviteOverlayAsync() {
         if (state != State.STARTED) {
-            return CompletableFuture.failedFuture(
-                    new IllegalStateException("The Steam world is not ready for invitations")
-            );
+            return failedFuture(new IllegalStateException("The Steam world is not ready for invitations"));
         }
         try {
             return SteamRuntime.get().openHostInviteOverlay(this);
         } catch (Throwable throwable) {
-            return CompletableFuture.failedFuture(throwable);
+            return failedFuture(throwable);
         }
+    }
+
+    private static <T> CompletableFuture<T> failedFuture(Throwable throwable) {
+        CompletableFuture<T> failed = new CompletableFuture<>();
+        failed.completeExceptionally(throwable);
+        return failed;
     }
 
     private void start() {
@@ -123,7 +141,10 @@ public final class SteamSession {
                 lobbyCreated = runtime.createHostLobby(this, accessMode, newAddress);
             }
 
-            lobbyCreated.get(20, TimeUnit.SECONDS);
+            // VPN routes can make CreateLobby time out while Steam itself is
+            // still connected. The lobby manager retries sequentially, so
+            // keep this session alive long enough for every attempt.
+            lobbyCreated.get(HOST_LOBBY_START_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             synchronized (lifecycleLock) {
                 if (state != State.STARTING) {
                     return;
@@ -209,7 +230,7 @@ public final class SteamSession {
         try {
             String detail = throwable.getMessage();
             Component message = Mirror.translatable("text.e4steam_minecraft.error");
-            if (detail != null && !detail.isBlank()) {
+            if (detail != null && !detail.trim().isEmpty()) {
                 message = Mirror.append(message, Mirror.literal(": " + detail));
             }
             Component retryButton = Mirror.withStyle(

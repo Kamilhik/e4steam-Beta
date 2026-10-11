@@ -8,28 +8,19 @@ final class SteamInvitationAuthorizer {
         ALLOWED,
         SESSION_CLOSED,
         INVALID_OR_EXPIRED_TOKEN,
-        PEER_NOT_READY,
         PEER_NOT_ALLOWED
     }
 
     private SteamInvitationAuthorizer() {
     }
 
-    static Decision authorize(
-            byte[] activeToken,
-            byte[] presentedToken,
-            boolean peerAllowed,
-            boolean peerMayBecomeAllowed
-    ) {
+    static Decision authorize(byte[] activeToken, byte[] presentedToken, boolean peerAllowed) {
         if (activeToken == null) {
             return Decision.SESSION_CLOSED;
         }
         if (presentedToken == null || !MessageDigest.isEqual(activeToken, presentedToken)) {
             return Decision.INVALID_OR_EXPIRED_TOKEN;
         }
-        if (peerAllowed) {
-            return Decision.ALLOWED;
-        }
-        return peerMayBecomeAllowed ? Decision.PEER_NOT_READY : Decision.PEER_NOT_ALLOWED;
+        return peerAllowed ? Decision.ALLOWED : Decision.PEER_NOT_ALLOWED;
     }
 }

@@ -1,68 +1,24 @@
 package link.e4steam.mixin;
 
-import link.e4steam.E4steamClient;
-import link.e4steam.Config;
 import link.e4steam.MinecraftUiCompat;
-import link.e4steam.Mirror;
-import link.e4steam.OptionalCompatibility;
-import link.e4steam.steam.SteamAccessMode;
-import net.minecraft.client.gui.components.CycleButton;
-import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.gui.screens.ShareToLanScreen;
-import net.minecraft.network.chat.Component;
+import link.e4steam.lan.LanSettingsScreen;
+import net.minecraft.client.Minecraft;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.Pseudo;
+import net.minecraft.client.gui.screens.ShareToLanScreen;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+/** Routes the vanilla LAN entry to e4steam's single combined LAN/Steam form. */
 @Mixin(ShareToLanScreen.class)
-public abstract class ShareToLanScreenMixin extends Screen {
-    protected ShareToLanScreenMixin(Component title) {
-        super(title);
-    }
-
-    @Inject(method = "init", at = @At("TAIL"), require = 0)
-    private void e4steam$addSteamAccessMode(CallbackInfo ci) {
-        OptionalCompatibility.run("open-to-lan-access-mode", this::e4steam$addSteamAccessModeSafely);
-    }
-
-    @Unique
-    private void e4steam$addSteamAccessModeSafely() {
-        if (!Config.INSTANCE.hostEnabled.value()) {
-            return;
-        }
-        SteamAccessMode initialMode = E4steamClient.selectedAccessMode;
-        if (initialMode == null) {
-            initialMode = SteamAccessMode.FRIENDS_ONLY;
-            E4steamClient.selectedAccessMode = initialMode;
-        }
-
-        CycleButton<SteamAccessMode> accessButton =
-                CycleButton.<SteamAccessMode>builder(ShareToLanScreenMixin::e4steam$accessModeName)
-                        .withValues(
-                                SteamAccessMode.LOCAL_ONLY,
-                                SteamAccessMode.FRIENDS_ONLY,
-                                SteamAccessMode.INVITE_ONLY
-                        )
-                        .withInitialValue(initialMode)
-                        .create(
-                                width / 2 - 155,
-                                height - 52,
-                                310,
-                                20,
-                                Mirror.translatable("text.e4steam_minecraft.accessMode"),
-                                (button, mode) -> E4steamClient.selectedAccessMode = mode
-                        );
-        MinecraftUiCompat.tooltip(
-                accessButton,
-                Mirror.translatable("text.e4steam_minecraft.accessModeHelp")
-        );
-        addRenderableWidget(accessButton);
-    }
-
-    @Unique
-    private static Component e4steam$accessModeName(SteamAccessMode mode) {
-        return Mirror.translatable(mode.translationKey());
+@Pseudo
+public abstract class ShareToLanScreenMixin {
+    @Inject(method = "init", at = @At("HEAD"), cancellable = true)
+    private void e4steam$openLanSettings(CallbackInfo ci) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.getSingleplayerServer() == null) return;
+        ci.cancel();
+        MinecraftUiCompat.setScreen(minecraft, new LanSettingsScreen(null));
     }
 }

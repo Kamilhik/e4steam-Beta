@@ -1,79 +1,102 @@
 package link.e4steam.steam;
 
+import com.codedisaster.steamworks.SteamFriends;
+import com.codedisaster.steamworks.SteamFriendsCallback;
 import com.codedisaster.steamworks.SteamAPICall;
 import com.codedisaster.steamworks.SteamID;
 import com.codedisaster.steamworks.SteamMatchmaking;
 import com.codedisaster.steamworks.SteamMatchmakingCallback;
 import com.codedisaster.steamworks.SteamNativeHandle;
 import com.codedisaster.steamworks.SteamResult;
+import link.e4steam.Agnos;
 import link.e4steam.E4steamClient;
 import link.e4steam.MinecraftVersion;
 import link.e4steam.Mirror;
 
 import java.io.IOException;
-import java.util.HashSet;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalLong;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.LongConsumer;
 
-/** Steam lobby and invitation-join state. Called only by the Steam worker. */
+/** Steam lobby, friends, overlay and invite state. Called only by the Steam worker. */
 final class SteamLobbyManager implements AutoCloseable {
     static final int VANILLA_LOBBY_CAPACITY = 8;
     static final int VANILLA_MAX_GUESTS = VANILLA_LOBBY_CAPACITY - 1;
+    static final int HOST_LOBBY_MAX_ATTEMPTS = 6;
+
     private static final String KEY_PROTOCOL = "e4steam_protocol";
     private static final String KEY_MINECRAFT = "e4steam_minecraft";
     private static final String KEY_ENDPOINT = "e4steam_endpoint";
     private static final String PROTOCOL_VERSION = Byte.toString(SteamProtocol.VERSION);
+    private static final String LOBBY_CONNECT_PREFIX = "e4steam-lobby:";
     private static final long GUEST_JOIN_TIMEOUT_MILLIS = 30_000;
+    private static final long CANCELED_JOIN_TOMBSTONE_MILLIS = 60_000;
 
     private final SteamRuntime runtime;
     private final String minecraftVersion = MinecraftVersion.current();
-    private final SteamSocialProvider social;
+    private final SteamFriends friends;
     private final SteamMatchmaking matchmaking;
 
-    private PendingHost pendingHost;
-    private PendingHost queuedHost;
-    private HostLobby hostLobby;
-    private GuestLobby guestLobby;
+    private SteamSession pendingHostOwner;
+    private SteamAccessMode pendingHostAccessMode;
+    private SteamAddress pendingHostAddress;
+    private CompletableFuture<Long> pendingHostResult;
+    private int pendingHostAttempts;
+    private boolean pendingHostCanceled;
+    private SteamSession queuedHostOwner;
+    private SteamAccessMode queuedHostAccessMode;
+    private SteamAddress queuedHostAddress;
+    private CompletableFuture<Long> queuedHostResult;
+    private SteamSession hostLobbyOwner;
+    private SteamAccessMode hostLobbyAccessMode;
+    private long hostLobbyId;
+    private int appliedHostCapacity;
+    private long guestLobbyId;
+    private long guestHostSteamId;
+    private long guestInviterSteamId;
+    private SteamGuestJoinState guestJoinState;
+    private String guestEndpoint;
     private long requestedLobbyId;
     private long requestedFriendId;
     private long requestedJoinDeadlineMillis;
-    private final Set<Long> canceledJoinLobbyIds = new HashSet<>();
+    private boolean requestedDirectoryJoin;
+    private boolean guestDirectoryJoin;
+    private final Map<Long, Long> canceledJoinLobbyDeadlines = new HashMap<>();
 
-    SteamLobbyManager(SteamRuntime runtime, SteamSocialProvider social) {
+    SteamLobbyManager(SteamRuntime runtime) {
         this.runtime = runtime;
-        this.social = social;
-        social.setListener(new SteamSocialProvider.Listener() {
+        friends = new SteamFriends(new SteamFriendsCallback() {
             @Override
-            public void onLobbyJoinRequested(long lobbyId, long friendSteamId) {
-                requestJoin(lobbyId, friendSteamId);
+            public void onGameLobbyJoinRequested(SteamID lobby, SteamID friend) {
+                requestJoin(lobby, friend, false);
             }
 
             @Override
-            public void onGuiInvitationReceived(
-                    long lobbyId,
-                    long friendSteamId,
-                    String friendName,
-                    String minecraftName,
-                    long invitationGeneration
-            ) {
-                E4steamClient.showSteamInvitationToast(
-                        lobbyId, friendSteamId, friendName, minecraftName, invitationGeneration
-                );
-            }
-
-            @Override
-            public void onGuiJoinRequestReceived(
-                    long friendSteamId,
-                    String friendName,
-                    String minecraftName,
-                    long requestGeneration
-            ) {
-                E4steamClient.showSteamJoinRequestToast(
-                        friendSteamId, friendName, minecraftName, requestGeneration
-                );
+            public void onGameRichPresenceJoinRequested(SteamID friend, String connect) {
+                if (connect == null) {
+                    return;
+                }
+                long friendId = SteamNativeHandle.getNativeHandle(friend);
+                Optional<SteamAddress> direct = SteamAddress.tryParse(connect);
+                if (direct.isPresent()
+                        && direct.get().steamId() == friendId
+                        && friends.getFriendRelationship(friend) == SteamFriends.FriendRelationship.Friend) {
+                    E4steamClient.acceptDirectSteamInvite(connect, friends.getFriendPersonaName(friend));
+                    return;
+                }
+                if (!connect.startsWith(LOBBY_CONNECT_PREFIX)) {
+                    return;
+                }
+                try {
+                    long lobbyId = Long.parseUnsignedLong(connect.substring(LOBBY_CONNECT_PREFIX.length()));
+                    requestJoin(SteamID.createFromNativeHandle(lobbyId), friend, false);
+                } catch (NumberFormatException ignored) {
+                    E4steamClient.LOGGER.debug("Ignored an invalid Steam rich-presence join string");
+                }
             }
         });
         matchmaking = new SteamMatchmaking(new SteamMatchmakingCallback() {
@@ -95,7 +118,7 @@ final class SteamLobbyManager implements AutoCloseable {
             @Override
             public void onLobbyDataUpdate(SteamID lobby, SteamID member, boolean success) {
                 long lobbyId = SteamNativeHandle.getNativeHandle(lobby);
-                if (success && guestLobby != null && guestLobby.lobbyId == lobbyId && guestLobby.endpoint == null) {
+                if (success && guestLobbyId == lobbyId && guestEndpoint == null) {
                     resolveGuestEndpoint();
                 }
             }
@@ -112,16 +135,15 @@ final class SteamLobbyManager implements AutoCloseable {
                 }
                 long lobbyId = SteamNativeHandle.getNativeHandle(lobby);
                 long userId = SteamNativeHandle.getNativeHandle(changedUser);
-                if (hostLobby != null && hostLobby.lobbyId == lobbyId) {
+                if (hostLobbyOwner != null && hostLobbyId == lobbyId) {
                     if (userId == runtime.steamIdValue()) {
                         loseHostLobby("Steam removed the host from its lobby");
                         return;
                     }
                     runtime.closeRemoteBridges(userId);
                 }
-                if (guestLobby != null
-                        && guestLobby.lobbyId == lobbyId
-                        && (guestLobby.hostSteamId == userId || userId == runtime.steamIdValue())) {
+                if (guestLobbyId == lobbyId
+                        && (guestHostSteamId == userId || userId == runtime.steamIdValue())) {
                     loseGuestLobby();
                 }
             }
@@ -129,9 +151,9 @@ final class SteamLobbyManager implements AutoCloseable {
             @Override
             public void onLobbyKicked(SteamID lobby, SteamID admin, boolean disconnected) {
                 long lobbyId = SteamNativeHandle.getNativeHandle(lobby);
-                if (hostLobby != null && hostLobby.lobbyId == lobbyId) {
+                if (hostLobbyOwner != null && hostLobbyId == lobbyId) {
                     loseHostLobby("Steam closed the host lobby");
-                } else if (guestLobby != null && guestLobby.lobbyId == lobbyId) {
+                } else if (guestLobbyId == lobbyId) {
                     loseGuestLobby();
                 }
             }
@@ -148,142 +170,150 @@ final class SteamLobbyManager implements AutoCloseable {
             result.completeExceptionally(new IOException("Local-only mode does not create a Steam lobby"));
             return result;
         }
-        if (hostLobby != null || queuedHost != null) {
+        if (hostLobbyOwner != null || queuedHostOwner != null) {
             result.completeExceptionally(new IOException("A Steam lobby is already active"));
             return result;
         }
 
-        PendingHost requested = new PendingHost(owner, accessMode, address, result);
-        if (pendingHost != null) {
-            if (!pendingHost.canceled) {
+        if (pendingHostOwner != null) {
+            if (!pendingHostCanceled) {
                 result.completeExceptionally(new IOException("A Steam lobby is already being created"));
             } else {
-                queuedHost = requested;
+                queuedHostOwner = owner;
+                queuedHostAccessMode = accessMode;
+                queuedHostAddress = address;
+                queuedHostResult = result;
             }
             return result;
         }
 
-        issueHostCreate(requested);
+        issueHostCreate(owner, accessMode, address, result, 0);
         return result;
     }
 
     void stopHosting(SteamSession owner) {
-        PendingHost pending = pendingHost;
-        if (pending != null && pending.owner == owner) {
+        if (pendingHostOwner == owner) {
             // Steam's lobby-created callback does not identify its API call.
             // Keep this canceled request as a tombstone so a late callback
             // cannot be mistaken for a newer hosting session.
-            pending.canceled = true;
-            pending.result.completeExceptionally(new IOException("Steam hosting was stopped"));
+            pendingHostCanceled = true;
+            pendingHostResult.completeExceptionally(new IOException("Steam hosting was stopped"));
         }
-        PendingHost queued = queuedHost;
-        if (queued != null && queued.owner == owner) {
-            queuedHost = null;
-            queued.result.completeExceptionally(new IOException("Steam hosting was stopped"));
+        if (queuedHostOwner == owner) {
+            CompletableFuture<Long> result = queuedHostResult;
+            clearQueuedHost();
+            result.completeExceptionally(new IOException("Steam hosting was stopped"));
         }
-        HostLobby current = hostLobby;
-        if (current != null && current.owner == owner) {
-            SteamID lobby = SteamID.createFromNativeHandle(current.lobbyId);
-            matchmaking.setLobbyJoinable(lobby, false);
-            matchmaking.leaveLobby(lobby);
-            hostLobby = null;
-            social.clearHostingPresence();
-            social.markInvitationUnavailable(current.lobbyId);
+        if (hostLobbyOwner == owner) {
+            if (hostLobbyId != 0) {
+                SteamID lobby = SteamID.createFromNativeHandle(hostLobbyId);
+                matchmaking.setLobbyJoinable(lobby, false);
+                matchmaking.leaveLobby(lobby);
+            }
+            clearHostLobby();
+            friends.clearRichPresence();
         }
     }
 
     void openHostInviteOverlay(SteamSession owner) throws IOException {
-        HostLobby current = hostLobby;
-        if (current == null || current.owner != owner) {
+        if (hostLobbyOwner != owner) {
             throw new IOException("Steam lobby is not ready");
         }
-        social.openInviteOverlay(current.lobbyId);
-    }
-
-    boolean inviteFriend(SteamSession owner, long remoteSteamId) throws IOException {
-        HostLobby current = hostLobby;
-        if (current == null || current.owner != owner) {
-            throw new IOException("Steam lobby is not ready");
+        // On Linux and macOS, invoking the native invite dialog without an
+        // injected overlay can crash some Steam/JVM combinations. Prefer the
+        // real overlay when Steam reports it ready; otherwise open the
+        // standalone Steam friends window. Lobby rich presence remains active
+        // in either case, so friends can still use Join Game.
+        if (shouldUseStandaloneFriends(isUnix(), runtime.isOverlayEnabledOnWorker())) {
+            openStandaloneSteamFriends();
+            return;
         }
-        if (runtime.isPeerConnected(remoteSteamId)) {
-            return false;
+        requireOverlay();
+        if (hostLobbyId == 0) {
+            openFriendsOverlayCompat();
+            return;
         }
-        return social.inviteToLobby(remoteSteamId, current.lobbyId);
+        friends.activateGameOverlayInviteDialog(SteamID.createFromNativeHandle(hostLobbyId));
     }
 
-    boolean requestToJoin(long remoteSteamId) throws IOException {
-        return social.requestToJoin(remoteSteamId);
-    }
-
-    boolean approveJoinRequest(
-            SteamSession owner,
-            long remoteSteamId,
-            long requestGeneration
-    ) throws IOException {
-        boolean invited = inviteFriend(owner, remoteSteamId);
-        if (invited) social.markJoinRequestUnavailable(remoteSteamId, requestGeneration);
-        return invited;
-    }
-
-    boolean joinFriend(long remoteSteamId) {
-        OptionalLong lobbyId = social.friendLobby(remoteSteamId);
-        if (lobbyId.isEmpty()) {
-            return false;
+    void openFriendsOverlay() throws IOException {
+        if (shouldUseStandaloneFriends(isUnix(), runtime.isOverlayEnabledOnWorker())) {
+            openStandaloneSteamFriends();
+            return;
         }
-        requestJoin(lobbyId.getAsLong(), remoteSteamId);
-        return true;
-    }
-
-    boolean joinInvitation(long lobbyId, long remoteSteamId) {
-        if (lobbyId == 0 || !social.isDirectFriend(remoteSteamId)) {
-            return false;
-        }
-        requestJoin(lobbyId, remoteSteamId);
-        return true;
+        requireOverlay();
+        openFriendsOverlayCompat();
     }
 
     boolean allows(SteamSession owner, long remoteSteamId) {
-        HostLobby current = hostLobby;
-        if (current == null || current.owner != owner) {
+        if (hostLobbyOwner != owner) {
             return false;
         }
-        return isAllowedHostPeer(current, remoteSteamId);
+        return isAllowedHostPeer(remoteSteamId);
+    }
+
+    long publicHostLobbyId() {
+        if (hostLobbyOwner == null || hostLobbyAccessMode != SteamAccessMode.CUSTOM
+                || !SteamCustomAccessGate.isRegistered(hostLobbyOwner.customAccessModeId())) {
+            return 0L;
+        }
+        return hostLobbyId;
+    }
+
+    boolean joinPublicLobby(long lobbyId) {
+        if (lobbyId == 0L) return false;
+        return requestJoin(SteamID.createFromNativeHandle(lobbyId), null, true);
     }
 
     boolean mayAcceptPeer(long remoteSteamId) {
-        GuestLobby currentGuest = guestLobby;
-        if (currentGuest != null && currentGuest.hostSteamId == remoteSteamId) {
+        if (guestLobbyId != 0 && guestHostSteamId == remoteSteamId) {
             return true;
         }
-        HostLobby currentHost = hostLobby;
-        return currentHost != null
-                && (isAllowedHostPeer(currentHost, remoteSteamId)
-                || mayAwaitHostPeer(currentHost, remoteSteamId));
-    }
-
-    /**
-     * A private-lobby member update can reach the guest before it reaches the
-     * host. Keep the authenticated Steam session alive briefly, but do not
-     * authorize Minecraft traffic until Steam lists the friend as a member.
-     */
-    boolean mayAwaitHostPeer(SteamSession owner, long remoteSteamId) {
-        HostLobby current = hostLobby;
-        return current != null
-                && current.owner == owner
-                && mayAwaitHostPeer(current, remoteSteamId);
+        return hostLobbyOwner != null && isAllowedHostPeer(remoteSteamId);
     }
 
     void forEachKnownSessionPeer(LongConsumer consumer) {
-        GuestLobby currentGuest = guestLobby;
-        if (currentGuest != null && currentGuest.hostSteamId != 0) {
-            consumer.accept(currentGuest.hostSteamId);
-        }
-
-        HostLobby currentHost = hostLobby;
-        if (currentHost == null) {
+        // Some Steam client builds omit the session-request callback. Platforms
+        // that opt in accept only known social peers while a lobby/world is
+        // active; handleOpen still authenticates the secret endpoint token and
+        // applies the world's friend/invite policy before opening localhost.
+        if (!Agnos.proactivelyAcceptSteamPeerSessions()) {
             return;
         }
-        SteamID lobbyId = SteamID.createFromNativeHandle(currentHost.lobbyId);
+
+        if (guestLobbyId != 0 && guestHostSteamId != 0) {
+            consumer.accept(guestHostSteamId);
+        }
+
+        if (hostLobbyOwner == null) {
+            return;
+        }
+
+        // Steam Networking Messages does not reliably deliver its session-request
+        // callback on every Steam client build. For a friends-only world, pre-accept
+        // Steam friends so a copied short address can deliver its OPEN frame. Steam's
+        // reported game ID is deliberately not used here: after leaving a connection,
+        // some clients report no current game even though the e4steam runtime is still
+        // alive. This grants no world access: SteamRuntime.handleOpen still checks the
+        // current address token and friendship before opening a localhost bridge.
+        if (preAcceptsFriendsForDirectAddress(hostLobbyAccessMode)) {
+            int friendCount = friends.getFriendCount(SteamFriends.FriendFlags.Immediate);
+            for (int index = 0; index < friendCount; index++) {
+                SteamID friend = friends.getFriendByIndex(index, SteamFriends.FriendFlags.Immediate);
+                if (friend == null) {
+                    continue;
+                }
+                long remoteSteamId = SteamNativeHandle.getNativeHandle(friend);
+                if (remoteSteamId != 0 && remoteSteamId != runtime.steamIdValue()) {
+                    consumer.accept(remoteSteamId);
+                }
+            }
+        }
+
+        if (hostLobbyId == 0) {
+            return;
+        }
+        SteamID lobbyId = SteamID.createFromNativeHandle(hostLobbyId);
         int memberCount = matchmaking.getNumLobbyMembers(lobbyId);
         for (int index = 0; index < memberCount; index++) {
             SteamID member = matchmaking.getLobbyMemberByIndex(lobbyId, index);
@@ -293,72 +323,100 @@ final class SteamLobbyManager implements AutoCloseable {
             long remoteSteamId = SteamNativeHandle.getNativeHandle(member);
             if (remoteSteamId != 0
                     && remoteSteamId != runtime.steamIdValue()
-                    && social.isDirectFriend(remoteSteamId)) {
+                    && (hostLobbyAccessMode == SteamAccessMode.CUSTOM
+                    || friends.getFriendRelationship(member) == SteamFriends.FriendRelationship.Friend)) {
                 consumer.accept(remoteSteamId);
             }
         }
     }
 
+    static boolean preAcceptsFriendsForDirectAddress(SteamAccessMode accessMode) {
+        return accessMode == SteamAccessMode.FRIENDS_ONLY;
+    }
+
     boolean keepsRuntimeAlive() {
-        return (pendingHost != null && !pendingHost.canceled)
-                || queuedHost != null
-                || hostLobby != null
-                || guestLobby != null
+        return (pendingHostOwner != null && !pendingHostCanceled)
+                || queuedHostOwner != null
+                || hostLobbyOwner != null
+                || guestLobbyId != 0
                 || requestedLobbyId != 0;
     }
 
     void clientBridgeOpened(long remoteSteamId) {
-        GuestLobby current = guestLobby;
-        if (current != null && current.hostSteamId == remoteSteamId) {
-            current.joinState.connected();
+        if (guestLobbyId != 0 && guestHostSteamId == remoteSteamId) {
+            guestJoinState.connected();
+            if (guestDirectoryJoin) {
+                runtime.publicJoinActive(guestLobbyId);
+            }
         }
     }
 
     void clientBridgeClosed(long remoteSteamId, boolean anotherBridgeExists) {
-        GuestLobby current = guestLobby;
-        if (current != null && current.hostSteamId == remoteSteamId && !anotherBridgeExists) {
+        if (guestLobbyId != 0 && guestHostSteamId == remoteSteamId && !anotherBridgeExists) {
             leaveGuestLobby();
         }
     }
 
     void cancelGuestJoin() {
+        long directoryLobby = requestedDirectoryJoin ? requestedLobbyId
+                : guestDirectoryJoin ? guestLobbyId : 0L;
+        if (directoryLobby != 0L) {
+            runtime.publicJoinCancelled(directoryLobby);
+        }
         leaveGuestLobby();
     }
 
     boolean claimGuestInvite(String endpoint) {
-        GuestLobby current = guestLobby;
-        if (current == null
+        if (guestLobbyId == 0
                 || endpoint == null
-                || !endpoint.equals(current.endpoint)
-                || !current.joinState.claim()) {
+                || !endpoint.equals(guestEndpoint)
+                || !guestJoinState.claim()) {
             return false;
         }
         return true;
     }
 
     boolean beginGuestConnect(String endpoint) {
-        GuestLobby current = guestLobby;
-        if (current != null
+        if (guestLobbyId != 0
                 && endpoint != null
-                && endpoint.equals(current.endpoint)) {
-            return current.joinState.beginConnect(
+                && endpoint.equals(guestEndpoint)) {
+            boolean started = guestJoinState.beginConnect(
                     System.currentTimeMillis() + GUEST_JOIN_TIMEOUT_MILLIS
             );
+            if (started && guestDirectoryJoin) {
+                runtime.publicJoinConnecting(guestLobbyId);
+            }
+            return started;
         }
         return false;
     }
 
     void cleanup(long now) {
+        int capacity = link.e4steam.lan.LanSettings.steamLobbyCapacity();
+        if (hostLobbyId != 0 && appliedHostCapacity != capacity) {
+            if (matchmaking.setLobbyMemberLimit(SteamID.createFromNativeHandle(hostLobbyId), capacity))
+                appliedHostCapacity = capacity;
+        }
+        canceledJoinLobbyDeadlines.entrySet().removeIf(entry -> entry.getValue() <= now);
         if (requestedLobbyId != 0 && requestedJoinDeadlineMillis <= now) {
+            long timedOutLobby = requestedLobbyId;
+            boolean directoryJoin = requestedDirectoryJoin;
+            if (directoryJoin) {
+                runtime.publicJoinFailed(timedOutLobby,
+                        SteamPublicJoinTracker.Phase.FAILED, "steam-lobby-timeout");
+            }
             leaveGuestLobby();
             E4steamClient.showSteamJoinFailure(Mirror.translatable("text.e4steam_minecraft.joinLobbyTimeout"));
             return;
         }
-        GuestLobby current = guestLobby;
-        if (current != null && current.joinState.expired(now)) {
-            if (runtime.hasClientBridgeForRemote(current.hostSteamId)) {
-                current.joinState.connected();
+        if (guestLobbyId != 0 && guestJoinState.expired(now)) {
+            if (runtime.hasClientBridgeForRemote(guestHostSteamId)) {
+                guestJoinState.connected();
                 return;
+            }
+            if (guestDirectoryJoin) {
+                runtime.publicJoinFailed(guestLobbyId,
+                        SteamPublicJoinTracker.Phase.FAILED, "minecraft-connect-timeout");
             }
             leaveGuestLobby();
             E4steamClient.showSteamJoinFailure(Mirror.translatable("text.e4steam_minecraft.joinConnectTimeout"));
@@ -366,24 +424,46 @@ final class SteamLobbyManager implements AutoCloseable {
     }
 
     private void handleLobbyCreated(SteamResult result, SteamID lobby) {
-        PendingHost pending = pendingHost;
-        pendingHost = null;
+        SteamSession owner = pendingHostOwner;
+        SteamAccessMode accessMode = pendingHostAccessMode;
+        SteamAddress address = pendingHostAddress;
+        CompletableFuture<Long> hostResult = pendingHostResult;
+        int attempts = pendingHostAttempts;
+        boolean canceled = pendingHostCanceled;
+        clearPendingHost();
         long lobbyId = SteamNativeHandle.getNativeHandle(lobby);
-        if (pending == null) {
+        if (owner == null) {
             if (lobbyId != 0) {
                 matchmaking.leaveLobby(lobby);
             }
             return;
         }
-        if (pending.canceled) {
+        if (canceled) {
             if (lobbyId != 0) {
                 matchmaking.leaveLobby(lobby);
             }
             issueQueuedHostCreate();
             return;
         }
+        if (shouldRetryHostCreation(result, attempts)) {
+            E4steamClient.LOGGER.warn(
+                    "Steam could not create the lobby ({}); retrying ({}/{})",
+                    result,
+                    attempts + 1,
+                    HOST_LOBBY_MAX_ATTEMPTS
+            );
+            issueHostCreate(owner, accessMode, address, hostResult, attempts);
+            return;
+        }
         if (result != SteamResult.OK || lobbyId == 0) {
-            pending.result.completeExceptionally(new IOException("Steam lobby creation failed: " + result));
+            if (!hostResult.isDone()) {
+                hostResult.completeExceptionally(new IOException("Steam lobby creation failed: " + result));
+            } else {
+                E4steamClient.LOGGER.warn(
+                        "Steam lobby creation failed with {}; continuing friends-only sharing by address",
+                        result
+                );
+            }
             issueQueuedHostCreate();
             return;
         }
@@ -391,92 +471,262 @@ final class SteamLobbyManager implements AutoCloseable {
         boolean metadataReady = matchmaking.setLobbyJoinable(lobby, false)
                 && matchmaking.setLobbyData(lobby, KEY_PROTOCOL, PROTOCOL_VERSION)
                 && matchmaking.setLobbyData(lobby, KEY_MINECRAFT, minecraftVersion)
-                && matchmaking.setLobbyData(lobby, KEY_ENDPOINT, pending.address.inviteString())
+                && matchmaking.setLobbyData(lobby, KEY_ENDPOINT, address.inviteString())
                 && matchmaking.setLobbyJoinable(lobby, true);
         if (!metadataReady) {
             matchmaking.leaveLobby(lobby);
-            pending.result.completeExceptionally(new IOException("Steam rejected e4steam lobby metadata"));
+            if (!hostResult.isDone()) {
+                hostResult.completeExceptionally(new IOException("Steam rejected e4steam lobby metadata"));
+            } else {
+                E4steamClient.LOGGER.warn(
+                        "Steam rejected lobby metadata; continuing friends-only sharing by address"
+                );
+            }
             issueQueuedHostCreate();
             return;
         }
 
-        hostLobby = new HostLobby(pending.owner, pending.accessMode, lobbyId);
-        try {
-            social.publishHosting(lobbyId, pending.accessMode == SteamAccessMode.FRIENDS_ONLY);
-        } catch (IOException exception) {
-            matchmaking.setLobbyJoinable(lobby, false);
-            matchmaking.leaveLobby(lobby);
-            hostLobby = null;
-            pending.result.completeExceptionally(exception);
-            issueQueuedHostCreate();
-            return;
+        hostLobbyOwner = owner;
+        hostLobbyAccessMode = accessMode;
+        hostLobbyId = lobbyId;
+        appliedHostCapacity = 0;
+        friends.clearRichPresence();
+        friends.setRichPresence("status", "Hosting a Minecraft LAN world");
+        if (accessMode == SteamAccessMode.FRIENDS_ONLY || accessMode == SteamAccessMode.CUSTOM) {
+            friends.setRichPresence("connect", LOBBY_CONNECT_PREFIX + Long.toUnsignedString(lobbyId));
         }
-        pending.result.complete(lobbyId);
+        hostResult.complete(lobbyId);
     }
 
-    private void issueHostCreate(PendingHost requested) {
-        pendingHost = requested;
-        SteamMatchmaking.LobbyType type = requested.accessMode == SteamAccessMode.FRIENDS_ONLY
-                ? SteamMatchmaking.LobbyType.FriendsOnly
-                : SteamMatchmaking.LobbyType.Private;
-        SteamAPICall call = matchmaking.createLobby(type, VANILLA_LOBBY_CAPACITY);
-        if (call == null || !call.isValid()) {
-            pendingHost = null;
-            requested.result.completeExceptionally(new IOException("Steam rejected the lobby creation request"));
+    private void issueHostCreate(
+            SteamSession owner,
+            SteamAccessMode accessMode,
+            SteamAddress address,
+            CompletableFuture<Long> result,
+            int completedAttempts
+    ) {
+        pendingHostOwner = owner;
+        pendingHostAccessMode = accessMode;
+        pendingHostAddress = address;
+        pendingHostResult = result;
+        pendingHostAttempts = completedAttempts + 1;
+        pendingHostCanceled = false;
+        long call;
+        try {
+            call = createLobbyCompat(
+                    matchmaking,
+                    accessMode,
+                    link.e4steam.lan.LanSettings.steamLobbyCapacity()
+            );
+        } catch (ReflectiveOperationException exception) {
+            clearPendingHost();
+            result.completeExceptionally(new IOException("Steam lobby compatibility call failed", exception));
+            issueQueuedHostCreate();
+            return;
+        }
+        if (call == 0) {
+            clearPendingHost();
+            result.completeExceptionally(new IOException("Steam rejected the lobby creation request"));
             issueQueuedHostCreate();
         }
+    }
+
+    static boolean shouldRetryHostCreation(SteamResult result, int completedAttempts) {
+        boolean temporaryNetworkFailure = result == SteamResult.Timeout
+                || result == SteamResult.NoConnection
+                || result == SteamResult.ServiceUnavailable
+                || result == SteamResult.Busy;
+        return temporaryNetworkFailure && completedAttempts < HOST_LOBBY_MAX_ATTEMPTS;
+    }
+
+    static boolean canStartBeforeLobby(SteamAccessMode accessMode) {
+        return false;
     }
 
     private void issueQueuedHostCreate() {
-        if (pendingHost != null || hostLobby != null || queuedHost == null) {
+        if (pendingHostOwner != null || hostLobbyOwner != null || queuedHostOwner == null) {
             return;
         }
-        PendingHost queued = queuedHost;
-        queuedHost = null;
-        issueHostCreate(queued);
+        SteamSession owner = queuedHostOwner;
+        SteamAccessMode accessMode = queuedHostAccessMode;
+        SteamAddress address = queuedHostAddress;
+        CompletableFuture<Long> result = queuedHostResult;
+        clearQueuedHost();
+        issueHostCreate(owner, accessMode, address, result, 0);
     }
 
-    private void requestJoin(long lobbyId, long friendSteamId) {
-        if (lobbyId == 0 || (hostLobby != null && hostLobby.lobbyId == lobbyId)) {
-            return;
+    private void clearPendingHost() {
+        pendingHostOwner = null;
+        pendingHostAccessMode = null;
+        pendingHostAddress = null;
+        pendingHostResult = null;
+        pendingHostAttempts = 0;
+        pendingHostCanceled = false;
+    }
+
+    private void clearQueuedHost() {
+        queuedHostOwner = null;
+        queuedHostAccessMode = null;
+        queuedHostAddress = null;
+        queuedHostResult = null;
+    }
+
+    private void clearHostLobby() {
+        hostLobbyOwner = null;
+        hostLobbyAccessMode = null;
+        hostLobbyId = 0;
+    }
+
+    private void clearGuestLobby() {
+        guestLobbyId = 0;
+        guestHostSteamId = 0;
+        guestInviterSteamId = 0;
+        guestJoinState = null;
+        guestEndpoint = null;
+        guestDirectoryJoin = false;
+    }
+
+    private static long createLobbyCompat(
+            SteamMatchmaking matchmaking,
+            SteamAccessMode accessMode,
+            int capacity
+    ) throws ReflectiveOperationException {
+        Class<?> steamInterface = matchmaking.getClass().getSuperclass();
+        Field callback = steamInterface.getDeclaredField("callback");
+        callback.setAccessible(true);
+        long callbackHandle = callback.getLong(matchmaking);
+
+        Class<?> nativeType = Class.forName("com.codedisaster.steamworks.SteamMatchmakingNative");
+        Method createLobby = nativeType.getDeclaredMethod("createLobby", long.class, int.class, int.class);
+        createLobby.setAccessible(true);
+        // Steamworks lobby type ordinals: Private=0, FriendsOnly=1, Public=2.
+        int lobbyType = accessMode == SteamAccessMode.FRIENDS_ONLY ? 1
+                : accessMode == SteamAccessMode.CUSTOM ? 2 : 0;
+        return (Long) createLobby.invoke(null, callbackHandle, lobbyType, capacity);
+    }
+
+    private static void openFriendsOverlayCompat() throws IOException {
+        try {
+            Class<?> nativeType = Class.forName("com.codedisaster.steamworks.SteamFriendsNative");
+            Method activate = nativeType.getDeclaredMethod("activateGameOverlay", String.class);
+            activate.setAccessible(true);
+            activate.invoke(null, "Friends");
+        } catch (ReflectiveOperationException exception) {
+            throw new IOException("Steam friends overlay compatibility call failed", exception);
         }
-        if (canceledJoinLobbyIds.contains(lobbyId)) {
+    }
+
+    private static boolean isLinux() {
+        return System.getProperty("os.name", "")
+                .toLowerCase(java.util.Locale.ROOT)
+                .contains("linux");
+    }
+
+    private static boolean isMacOS() {
+        String os = System.getProperty("os.name", "")
+                .toLowerCase(java.util.Locale.ROOT);
+        return os.contains("mac") || os.contains("darwin") || os.contains("os x");
+    }
+
+    private static boolean isUnix() {
+        return isLinux() || isMacOS();
+    }
+
+    static boolean shouldUseStandaloneFriends(boolean unix, boolean overlayEnabled) {
+        return unix && !overlayEnabled;
+    }
+
+    private static void openStandaloneSteamFriends() throws IOException {
+        if (isMacOS()) {
+            openMacSteamFriends();
+        } else {
+            openLinuxSteamFriends();
+        }
+    }
+
+    private static void openLinuxSteamFriends() throws IOException {
+        String uri = "steam://open/friends";
+        String[][] commands = new String[][]{
+                {"xdg-open", uri},
+                {"gio", "open", uri},
+                {"steam", uri}
+        };
+        IOException lastFailure = null;
+        for (String[] command : commands) {
+            try {
+                new ProcessBuilder(command).start();
+                return;
+            } catch (IOException exception) {
+                lastFailure = exception;
+            }
+        }
+        throw new IOException("Could not open the Steam friends window on Linux", lastFailure);
+    }
+
+    private static void openMacSteamFriends() throws IOException {
+        try {
+            new ProcessBuilder("open", "steam://open/friends").start();
+        } catch (IOException exception) {
+            throw new IOException("Could not open the Steam friends window on macOS", exception);
+        }
+    }
+
+    private boolean requestJoin(SteamID lobby, SteamID friend, boolean directoryJoin) {
+        long lobbyId = SteamNativeHandle.getNativeHandle(lobby);
+        if (lobbyId == 0 || (hostLobbyOwner != null && hostLobbyId == lobbyId)) {
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        Long canceledUntil = canceledJoinLobbyDeadlines.get(lobbyId);
+        if (canceledUntil != null && canceledUntil > now) {
             E4steamClient.showSteamJoinFailure(Mirror.translatable("text.e4steam_minecraft.joinCancelPending"));
-            return;
+            return false;
         }
-        if (requestedLobbyId == lobbyId || (guestLobby != null && guestLobby.lobbyId == lobbyId)) {
-            return;
+        canceledJoinLobbyDeadlines.remove(lobbyId);
+        if (requestedLobbyId == lobbyId || guestLobbyId == lobbyId) {
+            return false;
         }
-        if (guestLobby != null
-                && (guestLobby.endpoint != null
-                || guestLobby.joinState.isConnected()
-                || runtime.hasClientBridgeForRemote(guestLobby.hostSteamId))) {
+        if (guestLobbyId != 0
+                && (guestEndpoint != null
+                || guestJoinState.isConnected()
+                || runtime.hasClientBridgeForRemote(guestHostSteamId))) {
             E4steamClient.showSteamJoinFailure(Mirror.translatable("text.e4steam_minecraft.joinCurrentSession"));
-            return;
+            return false;
         }
-        if (guestLobby != null || requestedLobbyId != 0) {
+        if (guestLobbyId != 0 || requestedLobbyId != 0) {
             leaveGuestLobby();
         }
         requestedLobbyId = lobbyId;
-        requestedFriendId = friendSteamId;
-        requestedJoinDeadlineMillis = System.currentTimeMillis() + GUEST_JOIN_TIMEOUT_MILLIS;
-        SteamID lobby = SteamID.createFromNativeHandle(lobbyId);
+        requestedFriendId = friend == null ? 0L : SteamNativeHandle.getNativeHandle(friend);
+        requestedDirectoryJoin = directoryJoin;
+        requestedJoinDeadlineMillis = now + GUEST_JOIN_TIMEOUT_MILLIS;
         SteamAPICall call = matchmaking.joinLobby(lobby);
         if (call == null || !call.isValid()) {
             requestedLobbyId = 0;
             requestedFriendId = 0;
+            requestedDirectoryJoin = false;
             requestedJoinDeadlineMillis = 0;
+            if (directoryJoin) {
+                runtime.publicJoinFailed(lobbyId,
+                        SteamPublicJoinTracker.Phase.FAILED, "steam-join-rejected");
+            }
             E4steamClient.showSteamJoinFailure(Mirror.translatable("text.e4steam_minecraft.joinRejected"));
+            return false;
         }
+        if (directoryJoin) {
+            runtime.publicJoinBegin(lobbyId);
+        }
+        return true;
     }
 
     private void handleLobbyEnter(SteamID lobby, SteamMatchmaking.ChatRoomEnterResponse response) {
         long lobbyId = SteamNativeHandle.getNativeHandle(lobby);
-        if (canceledJoinLobbyIds.remove(lobbyId)) {
+        Long canceledUntil = canceledJoinLobbyDeadlines.remove(lobbyId);
+        if (canceledUntil != null && canceledUntil > System.currentTimeMillis()) {
             matchmaking.leaveLobby(lobby);
             return;
         }
-        if (hostLobby != null && hostLobby.lobbyId == lobbyId) {
+        if (hostLobbyOwner != null && hostLobbyId == lobbyId) {
             return;
         }
         if (requestedLobbyId != lobbyId) {
@@ -485,8 +735,16 @@ final class SteamLobbyManager implements AutoCloseable {
         }
         requestedLobbyId = 0;
         requestedJoinDeadlineMillis = 0;
+        boolean directoryJoin = requestedDirectoryJoin;
+        requestedDirectoryJoin = false;
         if (response != SteamMatchmaking.ChatRoomEnterResponse.Success) {
             requestedFriendId = 0;
+            if (directoryJoin) {
+                SteamPublicJoinTracker.Phase phase = publicJoinFailurePhase(response);
+                runtime.publicJoinFailed(lobbyId, phase,
+                        phase == SteamPublicJoinTracker.Phase.FULL
+                                ? "steam-lobby-full" : "steam-lobby-rejected");
+            }
             E4steamClient.showSteamJoinFailure(Mirror.translatable(
                     "text.e4steam_minecraft.joinLobbyEnterFailed",
                     response
@@ -498,69 +756,100 @@ final class SteamLobbyManager implements AutoCloseable {
         long ownerId = owner == null ? 0 : SteamNativeHandle.getNativeHandle(owner);
         if (ownerId == 0
                 || ownerId == runtime.steamIdValue()
-                || !social.isDirectFriend(ownerId)) {
+                || (!directoryJoin
+                && friends.getFriendRelationship(owner) != SteamFriends.FriendRelationship.Friend)) {
             matchmaking.leaveLobby(lobby);
             requestedFriendId = 0;
+            if (directoryJoin) {
+                runtime.publicJoinFailed(lobbyId,
+                        SteamPublicJoinTracker.Phase.STALE, "invalid-lobby-owner");
+            }
             E4steamClient.showSteamJoinFailure(Mirror.translatable("text.e4steam_minecraft.joinOwnerNotFriend"));
             return;
         }
-        guestLobby = new GuestLobby(
-                lobbyId,
-                ownerId,
-                requestedFriendId,
-                System.currentTimeMillis() + GUEST_JOIN_TIMEOUT_MILLIS
-        );
+        guestLobbyId = lobbyId;
+        guestHostSteamId = ownerId;
+        guestInviterSteamId = requestedFriendId;
+        guestDirectoryJoin = directoryJoin;
+        guestJoinState = new SteamGuestJoinState(System.currentTimeMillis() + GUEST_JOIN_TIMEOUT_MILLIS);
+        guestEndpoint = null;
         requestedFriendId = 0;
+        if (directoryJoin) {
+            runtime.publicJoinAuthenticating(lobbyId);
+        }
         resolveGuestEndpoint();
     }
 
     private void resolveGuestEndpoint() {
-        GuestLobby current = guestLobby;
-        if (current == null || current.endpoint != null) {
+        if (guestLobbyId == 0 || guestEndpoint != null) {
             return;
         }
-        SteamID lobby = SteamID.createFromNativeHandle(current.lobbyId);
+        SteamID lobby = SteamID.createFromNativeHandle(guestLobbyId);
         String protocol = matchmaking.getLobbyData(lobby, KEY_PROTOCOL);
         String minecraft = matchmaking.getLobbyData(lobby, KEY_MINECRAFT);
         String endpoint = matchmaking.getLobbyData(lobby, KEY_ENDPOINT);
-        if (protocol == null || protocol.isBlank() || endpoint == null || endpoint.isBlank()) {
+        if (protocol == null || protocol.trim().isEmpty() || endpoint == null || endpoint.trim().isEmpty()) {
             matchmaking.requestLobbyData(lobby);
             return;
         }
         if (!PROTOCOL_VERSION.equals(protocol) || !minecraftVersion.equals(minecraft)) {
+            if (guestDirectoryJoin) {
+                runtime.publicJoinFailed(guestLobbyId,
+                        SteamPublicJoinTracker.Phase.INCOMPATIBLE, "minecraft-version");
+            }
             leaveGuestLobby();
             E4steamClient.showSteamJoinFailure(Mirror.translatable("text.e4steam_minecraft.joinIncompatible"));
             return;
         }
         Optional<SteamAddress> parsed = SteamAddress.tryParse(endpoint);
-        if (parsed.isEmpty() || parsed.get().steamId() != current.hostSteamId) {
+        if (!parsed.isPresent() || parsed.get().steamId() != guestHostSteamId) {
+            if (guestDirectoryJoin) {
+                runtime.publicJoinFailed(guestLobbyId,
+                        SteamPublicJoinTracker.Phase.STALE, "invalid-target");
+            }
             leaveGuestLobby();
             E4steamClient.showSteamJoinFailure(Mirror.translatable("text.e4steam_minecraft.joinInvalidAddress"));
             return;
         }
 
-        current.endpoint = endpoint;
+        guestEndpoint = endpoint;
+        if (guestDirectoryJoin) {
+            runtime.publicJoinConnecting(guestLobbyId);
+        }
         // The in-world confirmation has no countdown. Keep this lobby alive
         // until the user chooses Join, then beginGuestConnect() starts the
         // bounded Minecraft connection window.
-        current.joinState.waitForConfirmation();
-        String hostName = social.friendName(current.hostSteamId);
+        guestJoinState.waitForConfirmation();
+        String hostName = friends.getFriendPersonaName(SteamID.createFromNativeHandle(guestHostSteamId));
         E4steamClient.acceptSteamInvite(endpoint, hostName);
     }
 
-    private boolean isAllowedHostPeer(HostLobby lobby, long remoteSteamId) {
-        if (!social.isDirectFriend(remoteSteamId)) {
+    private void requireOverlay() throws IOException {
+        if (!runtime.isOverlayEnabledOnWorker()) {
+            throw new IOException(
+                    "Steam Overlay is unavailable. Open the Steam friends window and use Join Game instead"
+            );
+        }
+    }
+
+    private boolean isAllowedHostPeer(long remoteSteamId) {
+        SteamID remote = SteamID.createFromNativeHandle(remoteSteamId);
+        boolean customPublic = hostLobbyAccessMode == SteamAccessMode.CUSTOM
+                && hostLobbyOwner != null
+                && SteamCustomAccessGate.isRegistered(hostLobbyOwner.customAccessModeId());
+        if (!customPublic
+                && friends.getFriendRelationship(remote) != SteamFriends.FriendRelationship.Friend) {
             return false;
         }
 
         // Friends-only deliberately permits the copied address as a fallback.
         // A private lobby is stricter: membership proves that Steam admitted
         // this friend through an invitation for the current hosting session.
-        if (lobby.accessMode == SteamAccessMode.FRIENDS_ONLY) {
+        if (hostLobbyAccessMode == SteamAccessMode.FRIENDS_ONLY) {
             return true;
         }
 
-        SteamID lobbyId = SteamID.createFromNativeHandle(lobby.lobbyId);
+        SteamID lobbyId = SteamID.createFromNativeHandle(hostLobbyId);
         int memberCount = matchmaking.getNumLobbyMembers(lobbyId);
         for (int index = 0; index < memberCount; index++) {
             SteamID member = matchmaking.getLobbyMemberByIndex(lobbyId, index);
@@ -571,114 +860,92 @@ final class SteamLobbyManager implements AutoCloseable {
         return false;
     }
 
-    private boolean mayAwaitHostPeer(HostLobby lobby, long remoteSteamId) {
-        return lobby.accessMode == SteamAccessMode.INVITE_ONLY
-                && social.isDirectFriend(remoteSteamId);
-    }
-
     private void loseHostLobby(String detail) {
-        HostLobby lost = hostLobby;
-        if (lost == null) {
+        SteamSession lostOwner = hostLobbyOwner;
+        if (lostOwner == null) {
             return;
         }
-        hostLobby = null;
-        social.clearHostingPresence();
-        social.markInvitationUnavailable(lost.lobbyId);
-        lost.owner.runtimeFailed(new IOException(detail));
+        clearHostLobby();
+        friends.clearRichPresence();
+        lostOwner.runtimeFailed(new IOException(detail));
     }
 
     private void loseGuestLobby() {
-        GuestLobby lost = guestLobby;
-        if (lost == null) {
+        if (guestLobbyId == 0) {
             return;
         }
-        lost.joinState.loseLobby();
-        runtime.closeRemoteBridges(lost.hostSteamId);
+        if (guestDirectoryJoin) {
+            runtime.publicJoinFailed(guestLobbyId,
+                    SteamPublicJoinTracker.Phase.FAILED, "steam-lobby-lost");
+        }
+        guestJoinState.loseLobby();
+        runtime.closeRemoteBridges(guestHostSteamId);
         leaveGuestLobby();
         E4steamClient.showSteamJoinFailure(Mirror.translatable("text.e4steam_minecraft.joinLobbyClosed"));
     }
 
+    private static SteamPublicJoinTracker.Phase publicJoinFailurePhase(
+            SteamMatchmaking.ChatRoomEnterResponse response
+    ) {
+        String value = String.valueOf(response).toLowerCase(java.util.Locale.ROOT);
+        return value.contains("full")
+                ? SteamPublicJoinTracker.Phase.FULL
+                : SteamPublicJoinTracker.Phase.FAILED;
+    }
+
     private void leaveGuestLobby() {
-        GuestLobby current = guestLobby;
+        long currentLobbyId = guestLobbyId;
+        SteamGuestJoinState currentJoinState = guestJoinState;
         long requested = requestedLobbyId;
-        guestLobby = null;
+        clearGuestLobby();
         requestedLobbyId = 0;
         requestedFriendId = 0;
+        requestedDirectoryJoin = false;
         requestedJoinDeadlineMillis = 0;
-        if (current != null) {
-            current.joinState.cancel();
-            matchmaking.leaveLobby(SteamID.createFromNativeHandle(current.lobbyId));
-            social.markInvitationUnavailable(current.lobbyId);
+        if (currentLobbyId != 0) {
+            currentJoinState.cancel();
+            matchmaking.leaveLobby(SteamID.createFromNativeHandle(currentLobbyId));
         } else if (requested != 0) {
             // LobbyEnter does not identify the JoinLobby API call. Preserve a
             // tombstone so a late callback cannot be accepted as a later
-            // retry for the same lobby in this Steam runtime generation.
-            canceledJoinLobbyIds.add(requested);
+            // retry for the same lobby until that callback can no longer be
+            // confused with a new request. Expire it so a lost callback does
+            // not block the same friend's invitation for the whole session.
+            canceledJoinLobbyDeadlines.put(
+                    requested,
+                    System.currentTimeMillis() + CANCELED_JOIN_TOMBSTONE_MILLIS
+            );
             matchmaking.leaveLobby(SteamID.createFromNativeHandle(requested));
-            social.markInvitationUnavailable(requested);
         }
     }
 
     @Override
     public void close() {
-        PendingHost pending = pendingHost;
-        pendingHost = null;
-        if (pending != null) {
-            pending.result.completeExceptionally(new IOException("Steam runtime stopped before creating the lobby"));
+        CompletableFuture<Long> pendingResult = pendingHostResult;
+        boolean hadPendingHost = pendingHostOwner != null;
+        clearPendingHost();
+        if (hadPendingHost) {
+            pendingResult.completeExceptionally(new IOException("Steam runtime stopped before creating the lobby"));
         }
-        PendingHost queued = queuedHost;
-        queuedHost = null;
-        if (queued != null) {
-            queued.result.completeExceptionally(new IOException("Steam runtime stopped before creating the lobby"));
+        CompletableFuture<Long> queuedResult = queuedHostResult;
+        boolean hadQueuedHost = queuedHostOwner != null;
+        clearQueuedHost();
+        if (hadQueuedHost) {
+            queuedResult.completeExceptionally(new IOException("Steam runtime stopped before creating the lobby"));
         }
-        if (hostLobby != null) {
-            SteamID lobby = SteamID.createFromNativeHandle(hostLobby.lobbyId);
-            matchmaking.setLobbyJoinable(lobby, false);
-            matchmaking.leaveLobby(lobby);
-            hostLobby = null;
+        if (hostLobbyOwner != null) {
+            if (hostLobbyId != 0) {
+                SteamID lobby = SteamID.createFromNativeHandle(hostLobbyId);
+                matchmaking.setLobbyJoinable(lobby, false);
+                matchmaking.leaveLobby(lobby);
+            }
+            clearHostLobby();
         }
         leaveGuestLobby();
-        canceledJoinLobbyIds.clear();
-        social.clearHostingPresence();
+        canceledJoinLobbyDeadlines.clear();
+        friends.clearRichPresence();
         matchmaking.dispose();
+        friends.dispose();
     }
 
-    private static final class PendingHost {
-        private final SteamSession owner;
-        private final SteamAccessMode accessMode;
-        private final SteamAddress address;
-        private final CompletableFuture<Long> result;
-        private boolean canceled;
-
-        private PendingHost(
-                SteamSession owner,
-                SteamAccessMode accessMode,
-                SteamAddress address,
-                CompletableFuture<Long> result
-        ) {
-            this.owner = owner;
-            this.accessMode = accessMode;
-            this.address = address;
-            this.result = result;
-        }
-    }
-
-    private record HostLobby(SteamSession owner, SteamAccessMode accessMode, long lobbyId) {
-    }
-
-    private static final class GuestLobby {
-        private final long lobbyId;
-        private final long hostSteamId;
-        @SuppressWarnings("unused")
-        private final long inviterSteamId;
-        private final SteamGuestJoinState joinState;
-        private String endpoint;
-
-        private GuestLobby(long lobbyId, long hostSteamId, long inviterSteamId, long deadlineMillis) {
-            this.lobbyId = lobbyId;
-            this.hostSteamId = hostSteamId;
-            this.inviterSteamId = inviterSteamId;
-            this.joinState = new SteamGuestJoinState(deadlineMillis);
-        }
-    }
 }

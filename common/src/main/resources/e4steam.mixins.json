@@ -3,22 +3,30 @@
   "package": "link.e4steam.mixin",
   "compatibilityLevel": "JAVA_17",
   "minVersion": "0.8",
-  "mixins": [],
+  "mixins": [
+    "ServerLoginPacketListenerImplMixin",
+    "ServerConnectionListenerMixin",
+    "ConnectionDiagnosticsMixin",
+    "SkinRestorationLoginMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   },
   "client": [
+    "ClientTerrainDiagnosticsMixin",
     "BanListCommandsMixin",
+    "IntegratedServerConnectionListenerMixin",
     "BanPlayerCommandsMixin",
     "ConnectScreenMixin",
     "JoinMultiplayerScreenMixin",
-    "MinecraftShutdownMixin",
+    "MultiplayerOptionsScreenMixin",
     "PardonCommandMixin",
     "PauseScreenMixin",
-    "ServerConnectionListenerMixin",
     "ShareToLanScreenMixin",
-    "TitleScreenMixin",
-    "WhitelistCommandMixin",
-    "ServerNameResolverMixin"
+    "PlayerListMixin",
+    "ServerNameResolverMixin",
+    "IntegratedServerLanMixin",
+    "WorldOptionsScreenMixin",
+    "LanSettingsRenderMixin"
   ]
 }
