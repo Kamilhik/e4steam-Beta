@@ -625,6 +625,40 @@ public final class SteamRuntime implements SteamBridgeRuntime {
         waitForSteamTask(task, STEAM_TASK_TIMEOUT, "opening the Steam friends overlay");
     }
 
+    /** Cancels the connection screen without touching bridges hosted for other players. */
+    public void cancelClientConnection() {
+        cancelGuestJoin();
+        SteamClientBridge.cancelPending();
+        SteamDedicatedClientBridge.cancelPending();
+        for (SteamConnectionBridge bridge : bridgeRegistry.snapshot()) {
+            if (!bridge.isHostSide()) bridge.close(true);
+        }
+    }
+
+    void closeClientBridges(long remoteSteamId) {
+        for (SteamConnectionBridge bridge : bridgeRegistry.snapshot()) {
+            if (!bridge.isHostSide() && bridge.remoteSteamId() == remoteSteamId) bridge.close(true);
+        }
+    }
+
+    /** Called only after Minecraft has handled the game login packet. */
+    public void clientMinecraftJoined(SocketAddress address) {
+        if (!(address instanceof InetSocketAddress)) return;
+        InetSocketAddress endpoint = (InetSocketAddress) address;
+        if (endpoint.getAddress() == null || !endpoint.getAddress().isLoopbackAddress()) return;
+        for (SteamConnectionBridge bridge : bridgeRegistry.snapshot()) {
+            if (bridge.isHostSide() || bridge.isClosed() || bridge.localPort() != endpoint.getPort()) continue;
+            submitSteamTaskIfRunning(() -> {
+                SteamLobbyManager current = lobbyManager;
+                if (current != null && !bridge.isClosed() && bridgeRegistry.snapshot().contains(bridge)) {
+                    current.clientMinecraftJoined(bridge);
+                }
+                return null;
+            });
+            break;
+        }
+    }
+
     public void cancelGuestJoin() {
         submitSteamTaskIfRunning(() -> {
             SteamLobbyManager current = lobbyManager;
@@ -925,9 +959,7 @@ public final class SteamRuntime implements SteamBridgeRuntime {
         }
         submitSteamTaskIfRunning(() -> {
             SteamLobbyManager current = lobbyManager;
-            if (current != null) {
-                current.clientBridgeOpened(remoteSteamId);
-            }
+            if (current != null && !bridge.isClosed()) current.clientBridgeOpened(bridge);
             return null;
         });
         return bridge;
@@ -1165,7 +1197,7 @@ public final class SteamRuntime implements SteamBridgeRuntime {
             submitSteamTaskIfRunning(() -> {
                 SteamLobbyManager current = lobbyManager;
                 if (current != null) {
-                    current.clientBridgeClosed(bridge.remoteSteamId(), finalAnotherBridgeExists);
+                    current.clientBridgeClosed(bridge, finalAnotherBridgeExists);
                 }
                 return null;
             });

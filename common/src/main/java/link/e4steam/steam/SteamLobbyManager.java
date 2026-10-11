@@ -342,8 +342,15 @@ final class SteamLobbyManager implements AutoCloseable {
                 || requestedLobbyId != 0;
     }
 
-    void clientBridgeOpened(long remoteSteamId) {
-        if (guestLobbyId != 0 && guestHostSteamId == remoteSteamId) {
+    void clientBridgeOpened(SteamConnectionBridge bridge) {
+        if (guestLobbyId != 0 && guestHostSteamId == bridge.remoteSteamId()) {
+            guestJoinState.bridgeOpened(bridge);
+            if (!E4steamClient.tracksMinecraftLogin()) clientMinecraftJoined(bridge);
+        }
+    }
+
+    void clientMinecraftJoined(SteamConnectionBridge bridge) {
+        if (guestLobbyId != 0 && guestJoinState.ownsBridge(bridge)) {
             guestJoinState.connected();
             if (guestDirectoryJoin) {
                 runtime.publicJoinActive(guestLobbyId);
@@ -351,8 +358,8 @@ final class SteamLobbyManager implements AutoCloseable {
         }
     }
 
-    void clientBridgeClosed(long remoteSteamId, boolean anotherBridgeExists) {
-        if (guestLobbyId != 0 && guestHostSteamId == remoteSteamId && !anotherBridgeExists) {
+    void clientBridgeClosed(SteamConnectionBridge bridge, boolean anotherBridgeExists) {
+        if (guestLobbyId != 0 && guestJoinState.ownsBridge(bridge) && !anotherBridgeExists) {
             leaveGuestLobby();
         }
     }
@@ -381,7 +388,7 @@ final class SteamLobbyManager implements AutoCloseable {
                 && endpoint != null
                 && endpoint.equals(guestEndpoint)) {
             boolean started = guestJoinState.beginConnect(
-                    System.currentTimeMillis() + GUEST_JOIN_TIMEOUT_MILLIS
+                    System.currentTimeMillis() + 120_000L
             );
             if (started && guestDirectoryJoin) {
                 runtime.publicJoinConnecting(guestLobbyId);
@@ -410,16 +417,13 @@ final class SteamLobbyManager implements AutoCloseable {
             return;
         }
         if (guestLobbyId != 0 && guestJoinState.expired(now)) {
-            if (runtime.hasClientBridgeForRemote(guestHostSteamId)) {
-                guestJoinState.connected();
-                return;
-            }
             if (guestDirectoryJoin) {
                 runtime.publicJoinFailed(guestLobbyId,
                         SteamPublicJoinTracker.Phase.FAILED, "minecraft-connect-timeout");
             }
+            runtime.closeClientBridges(guestHostSteamId);
             leaveGuestLobby();
-            E4steamClient.showSteamJoinFailure(Mirror.translatable("text.e4steam_minecraft.joinConnectTimeout"));
+            E4steamClient.showSteamJoinTimeout(Mirror.translatable("text.e4steam_minecraft.joinConnectTimeout"));
         }
     }
 

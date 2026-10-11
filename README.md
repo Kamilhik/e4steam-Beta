@@ -1,6 +1,6 @@
 <div align="center">
 
-**Beta 0.3.2-beta.1:** [Downloads](https://github.com/Kamilhik/e4steam-Beta/releases/tag/v0.3.2-beta.1) · [Изменения и ограничения](docs/BETA-0.3.2-beta.1_RU.md).
+**Beta 0.3.2-beta.2:** [Downloads](https://github.com/Kamilhik/e4steam-Beta/releases/tag/v0.3.2-beta.2) · [Изменения и ограничения](docs/BETA-0.3.2-beta.2_RU.md).
 
 **Общие миры через Steam:** [Public Servers 0.1.0-beta.10](https://github.com/Kamilhik/e4steam-Beta/releases/tag/public-servers-v0.1.0-beta.10). Установите ядро и аддон на оба компьютера.
 

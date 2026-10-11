@@ -340,6 +340,24 @@ public class E4steamClient {
         showSteamJoinFailure(reason);
     }
 
+    public static boolean tracksMinecraftLogin() { return true; }
+
+    /** Ends an expired Minecraft login instead of leaving the connection screen spinning. */
+    public static void showSteamJoinTimeout(Component reason) {
+        Minecraft minecraft = Minecraft.getInstance();
+        Screen expiredScreen = MinecraftUiCompat.currentScreen(minecraft);
+        minecraft.execute(() -> {
+            if (MinecraftUiCompat.currentScreen(minecraft) != expiredScreen) return;
+            if (minecraft.level == null && MinecraftUiCompat.currentScreen(minecraft) instanceof ConnectScreen) {
+                SteamRuntime.get().cancelClientConnection();
+                MinecraftUiCompat.setScreen(minecraft, new DisconnectedScreen(
+                        multiplayerScreen(), Mirror.translatable("connect.failed"), reason));
+            } else {
+                showSteamJoinFailure(reason);
+            }
+        });
+    }
+
     /** Displays a localized invitation/join error on the Minecraft thread. */
     public static void showSteamJoinFailure(Component reason) {
         Minecraft minecraft = Minecraft.getInstance();
@@ -411,7 +429,7 @@ public class E4steamClient {
                     }
 
                     // Integrated-server shutdown can block while the world is
-                    // saved. Start the 30-second connection window only after
+                    // saved. Start the Minecraft connection timeout only after
                     // that completes, and revalidate that the lobby survived.
                     SteamRuntime.get().beginGuestConnect(endpoint).whenComplete((armed, armFailure) ->
                             minecraft.execute(() -> {

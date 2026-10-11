@@ -154,6 +154,13 @@ public final class E4steamClient {
                 || SteamDedicatedAddress.tryParse(endpoint).isPresent();
     }
 
+    // Retro adapters do not yet expose the game-login callback.
+    public static boolean tracksMinecraftLogin() { return false; }
+
+    public static void showSteamJoinTimeout(Object detail) {
+        showSteamJoinFailure(detail);
+    }
+
     public static void showSteamJoinFailure(Object detail) {
         final String message = detail == null ? "Steam operation failed" : String.valueOf(detail);
         LOGGER.warn("Steam join failed: " + message);

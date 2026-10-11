@@ -18,6 +18,7 @@
     "IntegratedServerConnectionListenerMixin",
     "BanPlayerCommandsMixin",
     "ConnectScreenMixin",
+    "ClientJoinLifecycleMixin",
     "JoinMultiplayerScreenMixin",
     "MultiplayerOptionsScreenMixin",
     "PardonCommandMixin",
