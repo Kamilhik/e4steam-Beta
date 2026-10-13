@@ -1,8 +1,8 @@
+> Текущие исходники: e4steam **0.3.2-beta.5-sync.3** и [Public Servers beta.12](addons/e4steam-public-servers). [Сборка и ограничения беты](docs/BETA-0.3.2-beta.5-sync.3_RU.md).
+
 <div align="center">
 
-**Beta 0.3.2-beta.2:** [Downloads](https://github.com/Kamilhik/e4steam-Beta/releases/tag/v0.3.2-beta.2) · [Изменения и ограничения](docs/BETA-0.3.2-beta.2_RU.md).
-
-**Общие миры через Steam:** [Public Servers 0.1.0-beta.10](https://github.com/Kamilhik/e4steam-Beta/releases/tag/public-servers-v0.1.0-beta.10). Установите ядро и аддон на оба компьютера.
+**Beta 0.3.2-beta.1:** [Downloads](https://github.com/Kamilhik/e4steam-Beta/releases/tag/v0.3.2-beta.1) · [Изменения и ограничения](docs/BETA-0.3.2-beta.1_RU.md).
 
 <img src="common/src/main/resources/assets/e4steam_minecraft/icon.png" width="180" alt="e4steam logo">
 

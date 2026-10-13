@@ -31,7 +31,7 @@ import java.util.Map;
 /** Loader-independent Addon API 1.1 entrypoint. */
 public final class PublicServersAddon implements E4steamAddonEntrypoint {
     public static final String ADDON_ID = "k2studio:e4steam_public_servers";
-    public static final String VERSION = "0.1.0-beta.10";
+    public static final String VERSION = "0.1.0-beta.12";
     private static final System.Logger LOGGER =
             System.getLogger("e4steam Public Servers");
 
@@ -102,6 +102,8 @@ public final class PublicServersAddon implements E4steamAddonEntrypoint {
 
     private static void registerLifecycle(AddonContext context, PublicServersRuntime runtime,
                                           PublicServersConfig config, RuntimeSnapshot core) {
+        runtime.onPublicationNameChanged(() -> context.api().events().lastSnapshot(SessionStateEvent.TYPE)
+                .ifPresent(event -> onSession(runtime, config, core, event.snapshot())));
         own(context, context.api().events().subscribe(SessionStateEvent.TYPE,
                 event -> onSession(runtime, config, core, event.snapshot())));
         own(context, context.api().events().subscribe(DedicatedStateEvent.TYPE,

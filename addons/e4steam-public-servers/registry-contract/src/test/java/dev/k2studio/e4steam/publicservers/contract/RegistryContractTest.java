@@ -48,7 +48,7 @@ final class RegistryContractTest {
     @Test void displayTextRejectsLinksControlsAndMixedConfusableScripts() {
         assertThrows(IllegalArgumentException.class, () -> TextPolicy.title("https://example.test"));
         assertThrows(IllegalArgumentException.class, () -> TextPolicy.title("Safe\u0000name"));
-        assertThrows(IllegalArgumentException.class, () -> TextPolicy.title("Mineсraft"));
+        assertEquals("Мир Minecraft", TextPolicy.title("Мир Minecraft"));
     }
 
     private static PublicServerEntry entry() {

@@ -975,6 +975,14 @@ public final class SteamRuntime implements SteamBridgeRuntime {
         );
     }
 
+    void preJoinWaiting(SteamConnectionBridge bridge) {
+        submitSteamTaskIfRunning(() -> {
+            SteamLobbyManager current = lobbyManager;
+            if (current != null && !bridge.isClosed()) current.preJoinWaiting(bridge);
+            return null;
+        });
+    }
+
     boolean sendDedicatedOpen(
             SteamConnectionBridge bridge,
             SteamDedicatedAddress address,
@@ -2368,6 +2376,7 @@ public final class SteamRuntime implements SteamBridgeRuntime {
                     Integer.toUnsignedString(key.connectionId())
             );
         }
+        SteamAddonHooks.bridgeReady(bridge);
         bridge.markPeerReady();
     }
 

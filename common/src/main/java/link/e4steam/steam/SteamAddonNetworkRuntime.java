@@ -92,8 +92,9 @@ public final class SteamAddonNetworkRuntime implements AddonNetworkCoordinator.T
             bridge.close(true);
             return;
         }
+        synchronized (state) { if (state.negotiated) return; }
         coordinator.transport(this);
-        state.requiredLocal = coordinator.hasRequiredChannels();
+        state.requiredLocal = coordinator.hasRequiredChannels() || coordinator.hasPreJoinHandlers();
         state.gateUntilHello = gateUntilHello && coordinator.hasChannels();
         if (state.requiredLocal || state.gateUntilHello) bridge.requireAddonNegotiation();
         sendHello(bridge, state, coordinator);
@@ -120,16 +121,30 @@ public final class SteamAddonNetworkRuntime implements AddonNetworkCoordinator.T
                 bridgeClosed(bridge);
                 continue;
             }
+            synchronized (state) {
+                // OPEN may reach the host before its asynchronous bridge creation finishes.
+                if (!state.negotiated && now - state.lastHelloNanos >= OPTIONAL_HELLO_GRACE_NANOS)
+                    state.helloSent = false;
+            }
             if (!state.helloSent) sendHello(bridge, state, coordinator);
+            if (state.preJoin != null && !state.preJoin.isDone()
+                    && now - state.createdAtNanos >= java.util.concurrent.TimeUnit.MINUTES.toNanos(10)) {
+                bridge.close(true);
+                continue;
+            }
             if (state.requiredLocal && !state.negotiated
                     && now - state.createdAtNanos >= REQUIRED_HELLO_TIMEOUT_NANOS) {
                 bridge.close(true);
-            } else if (state.gateUntilHello && !state.negotiated
-                    && now - state.createdAtNanos >= OPTIONAL_HELLO_GRACE_NANOS) {
+            } else if (allowOptionalHelloFallback(state.requiredLocal, state.gateUntilHello,
+                    state.negotiated, now - state.createdAtNanos)) {
                 state.gateUntilHello = false;
                 bridge.markAddonNegotiated();
             }
         }
+    }
+
+    static boolean allowOptionalHelloFallback(boolean required, boolean waiting, boolean negotiated, long elapsedNanos) {
+        return !required && waiting && !negotiated && elapsedNanos >= OPTIONAL_HELLO_GRACE_NANOS;
     }
 
     void accept(SteamConnectionBridge bridge, byte frameType, byte[] payload) {
@@ -178,6 +193,7 @@ public final class SteamAddonNetworkRuntime implements AddonNetworkCoordinator.T
                              AddonNetworkCoordinator coordinator) {
         SteamAddonProtocol.Hello hello = SteamAddonProtocol.decodeHello(payload);
         if (hello == null) return;
+        synchronized (state) { if (state.negotiated) return; }
         List<ChannelDescriptor> remote = new ArrayList<>();
         for (SteamAddonProtocol.ChannelOffer offer : hello.channels()) {
             remote.add(offer.descriptor());
@@ -191,9 +207,19 @@ public final class SteamAddonNetworkRuntime implements AddonNetworkCoordinator.T
         synchronized (state) {
             state.remoteNonce = hello.nonce();
             state.negotiated = true;
+            // Reply once after receiving the peer hello: our first hello may have
+            // arrived before that peer registered its bridge. Duplicate hellos
+            // are ignored above, so this acknowledgement cannot loop.
+            state.helloSent = false;
         }
-        bridge.markAddonNegotiated();
-        if (!state.helloSent) sendHello(bridge, state, coordinator);
+        sendHello(bridge, state, coordinator);
+        if (coordinator.hasPreJoinHandlers()) SteamClientApiBridge.preJoinWaiting(bridge);
+        state.preJoin = coordinator.beforeJoin(identity.sessionId, identity.peerId);
+        state.preJoin.whenComplete((accepted, failure) -> {
+            if (bridges.get(bridge) != state || bridge.isClosed()) return;
+            if (failure == null && Boolean.TRUE.equals(accepted)) bridge.markAddonNegotiated();
+            else bridge.close(true);
+        });
     }
 
     private void acceptData(BridgeState state, BridgeIdentity identity, byte[] payload,
@@ -220,6 +246,7 @@ public final class SteamAddonNetworkRuntime implements AddonNetworkCoordinator.T
             hello = SteamAddonProtocol.encodeHello(state.localNonce,
                     coordinator.localDescriptors());
             state.helloSent = true;
+            state.lastHelloNanos = System.nanoTime();
         }
         if (!state.sender.sendHello(bridge,
                 SteamProtocol.encodeAddonHello(bridge.connectionId(), hello))) {
@@ -273,8 +300,10 @@ public final class SteamAddonNetworkRuntime implements AddonNetworkCoordinator.T
         private PeerId peerId;
         private boolean localIsHost;
         private final FrameSender sender;
-        private boolean helloSent;
+        private volatile boolean helloSent;
+        private long lastHelloNanos;
         private boolean negotiated;
+        private volatile java.util.concurrent.CompletableFuture<Boolean> preJoin;
         private boolean requiredLocal;
         private boolean gateUntilHello;
         private final long createdAtNanos = System.nanoTime();
@@ -310,6 +339,7 @@ public final class SteamAddonNetworkRuntime implements AddonNetworkCoordinator.T
         }
 
         private synchronized void destroy() {
+            if (preJoin != null) preJoin.cancel(false);
             if (localNonce != null) Arrays.fill(localNonce, (byte) 0);
             if (remoteNonce != null) Arrays.fill(remoteNonce, (byte) 0);
             localNonce = null;

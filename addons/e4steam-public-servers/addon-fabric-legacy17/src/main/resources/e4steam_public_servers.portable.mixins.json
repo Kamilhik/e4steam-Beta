@@ -3,6 +3,12 @@
   "minVersion": "0.8",
   "package": "dev.k2studio.e4steam.publicservers.mixin",
   "compatibilityLevel": "JAVA_16",
-  "client": ["MinecraftClientMixin", "JoinMultiplayerScreenMixin"],
-  "injectors": {"defaultRequire": 1}
+  "client": [
+    "MinecraftClientMixin",
+    "JoinMultiplayerScreenMixin",
+    "PublicServersRenderMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
 }

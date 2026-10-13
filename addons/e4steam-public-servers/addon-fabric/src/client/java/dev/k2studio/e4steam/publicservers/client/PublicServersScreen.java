@@ -158,17 +158,20 @@ public final class PublicServersScreen extends Screen {
         loadingDots = addRenderableWidget(new LoadingDotsWidget(
                 font, Component.translatable("e4steam_public_servers.state.loading")));
 
-        int actionWidth = Math.min(150, (contentWidth - 8) / 2);
-        int actionsLeft = contentLeft + (contentWidth - actionWidth * 2 - 8) / 2;
+        int actionWidth = Math.min(150, (contentWidth - 16) / 3);
+        int actionsLeft = contentLeft + (contentWidth - actionWidth * 3 - 16) / 2;
         connectButton = addRenderableWidget(Button.builder(
                         Component.translatable("e4steam_public_servers.connect"),
                         ignored -> joinSelected())
                 .bounds(actionsLeft, footerButtonsY, actionWidth, 20)
                 .build());
+        addRenderableWidget(Button.builder(Component.translatable("e4steam_public_servers.name.open"),
+                ignored -> minecraft.gui.setScreen(new ServerNameScreen(this)))
+                .bounds(actionsLeft + actionWidth + 8, footerButtonsY, actionWidth, 20).build());
         backButton = addRenderableWidget(Button.builder(
                         Component.translatable("e4steam_public_servers.back"),
                         ignored -> onClose())
-                .bounds(actionsLeft + actionWidth + 8, footerButtonsY, actionWidth, 20)
+                .bounds(actionsLeft + 2 * (actionWidth + 8), footerButtonsY, actionWidth, 20)
                 .build());
 
         listener = PublicServersClientBridge.listen(() -> {

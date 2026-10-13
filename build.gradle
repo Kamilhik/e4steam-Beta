@@ -526,6 +526,10 @@ tasks.register("releaseJars") {
                     throw new GradleException("${variant.label} is missing e4steam.mixins.json")
                 }
                 String mixinsConfig = zip.getInputStream(mixinsEntry).getText("UTF-8")
+                if (mixinsConfig.contains('"ClientTerrainDiagnosticsMixin"')
+                        || zip.getEntry("link/e4steam/mixin/ClientTerrainDiagnosticsMixin.class") != null) {
+                    throw new GradleException("${variant.label} includes the version-specific terrain diagnostic mixin")
+                }
                 if (!mixinsConfig.contains('"' + variant.loginMixin + '"')) {
                     throw new GradleException(
                             "${variant.label} does not enable authenticated offline-launcher login"

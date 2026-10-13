@@ -25,6 +25,7 @@ public final class PublicServersClientBridge {
     }
 
     public static void setCreatorName(String creatorName) {
+        PublicServersRuntime.loadServerName(net.minecraft.client.Minecraft.getInstance().gameDirectory.toPath());
         PublicServersRuntime.setLocalCreatorName(creatorName);
     }
 

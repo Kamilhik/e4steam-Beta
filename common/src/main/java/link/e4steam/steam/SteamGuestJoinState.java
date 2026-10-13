@@ -53,6 +53,11 @@ final class SteamGuestJoinState {
         return bridge != null && this.bridge == bridge;
     }
 
+    void extendPreJoin(Object bridge, long deadlineMillis) {
+        if (phase == Phase.CONNECTING && ownsBridge(bridge))
+            this.deadlineMillis = Math.max(this.deadlineMillis, deadlineMillis);
+    }
+
     void connected() {
         if (phase == Phase.CONNECTING) {
             phase = Phase.CONNECTED;

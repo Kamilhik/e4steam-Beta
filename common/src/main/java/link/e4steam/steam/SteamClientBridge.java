@@ -16,6 +16,16 @@ public final class SteamClientBridge {
     private static final int ACCEPT_TIMEOUT_MILLIS = 30_000;
     private static final Object PENDING_LOCK = new Object();
     private static final Set<PendingAccept> PENDING_ACCEPTS = ConcurrentHashMap.newKeySet();
+    private static final Set<Integer> LOCAL_ENDPOINTS = ConcurrentHashMap.newKeySet();
+
+    public static boolean isLocalEndpoint(java.net.SocketAddress address) {
+        if (!(address instanceof InetSocketAddress)) return false;
+        InetSocketAddress socket = (InetSocketAddress) address;
+        return socket.getAddress() != null && socket.getAddress().isLoopbackAddress()
+                && LOCAL_ENDPOINTS.contains(socket.getPort());
+    }
+
+    static void releaseLocalEndpoint(int port) { LOCAL_ENDPOINTS.remove(port); }
 
     private SteamClientBridge() {
     }
@@ -163,6 +173,7 @@ public final class SteamClientBridge {
                 throw new IOException("Steam connection was cancelled");
             }
             this.listener = listener;
+            LOCAL_ENDPOINTS.add(listener.getLocalPort());
         }
 
         synchronized SteamRuntime.Activity takeActivityForHandoff() {
@@ -193,6 +204,7 @@ public final class SteamClientBridge {
                 listener = null;
             }
             if (listenerToClose != null) {
+                LOCAL_ENDPOINTS.remove(listenerToClose.getLocalPort());
                 closeQuietly(listenerToClose);
             }
             closeActivity(activityToClose);

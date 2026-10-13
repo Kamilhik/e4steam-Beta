@@ -113,10 +113,23 @@ public interface NetworkService {
 
     /** Generation-safe channel handle. */
     interface ChannelHandle extends Registration {
+        /** Installs a pre-login check for peers negotiating this channel. False aborts the join.
+         * The callback runs on an addon worker; addon messages remain available while it waits.
+         * Register before the first connection. Older runtimes do not support this extension.
+         */
+        default void beforeJoin(PreJoinHandler handler) {
+            throw new UnsupportedOperationException("Pre-join synchronization is unavailable");
+        }
         /** Returns declaration. */ ChannelDescriptor descriptor();
         /** Returns negotiation/lifecycle state. */ ChannelState state();
         /** Sends a defensive payload after direction and negotiation checks. */
         CompletionStage<ApiResult<SendStatus>> send(SessionId sessionId, PeerId peerId, byte[] payload);
+    }
+
+    /** Asynchronous check performed before Minecraft protocol data is forwarded. */
+    interface PreJoinHandler {
+        /** Returns true to continue login, or false to cancel this connection. */
+        CompletionStage<Boolean> check(MessageContext context);
     }
 
     /** Safe bounded writer for addon schemas. */

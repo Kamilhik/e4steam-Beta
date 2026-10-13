@@ -22,6 +22,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Shared loader-neutral facade. Reopening UI reuses this runtime and never creates an executor. */
 public final class PublicServersRuntime implements Registration {
+    private static final ServerNameSettings NAME_SETTINGS = new ServerNameSettings();
+    private Runnable publicationNameChanged = () -> { };
     private static final int MAX_LISTENERS = 32;
     private static final AtomicReference<PublicServersRuntime> CURRENT = new AtomicReference<>();
     private static final AtomicReference<String> INTEGRATED_SERVER_NAME =
@@ -63,8 +65,17 @@ public final class PublicServersRuntime implements Registration {
         INTEGRATED_SERVER_NAME.set(ServerDisplayName.fromCreator(creatorName));
     }
 
+    public static void loadServerName(java.nio.file.Path gameDirectory) { NAME_SETTINGS.load(gameDirectory); }
+    public static String customServerName() { return NAME_SETTINGS.custom(); }
+    public static String defaultServerName() { return INTEGRATED_SERVER_NAME.get(); }
+    public static void saveServerName(String name) throws java.io.IOException {
+        NAME_SETTINGS.save(name);
+        current().ifPresent(runtime -> runtime.publicationNameChanged.run());
+    }
+    void onPublicationNameChanged(Runnable callback) { publicationNameChanged = callback; }
     String integratedServerName() {
-        return INTEGRATED_SERVER_NAME.get();
+        String custom = NAME_SETTINGS.custom();
+        return custom.isEmpty() ? INTEGRATED_SERVER_NAME.get() : custom;
     }
 
     /** Creates the production/dev HTTP client from a validated explicit configuration. */

@@ -42,6 +42,7 @@ public final class PublicJoinCoordinator implements Registration {
     private final AtomicLong generation = new AtomicLong();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean active = new AtomicBoolean();
+    private final AtomicBoolean polling = new AtomicBoolean();
     private final AtomicReference<Snapshot> snapshot = new AtomicReference<>(
             new Snapshot(0L, "", State.IDLE, ""));
     private volatile String coreOperationId = "";
@@ -87,7 +88,7 @@ public final class PublicJoinCoordinator implements Registration {
     public Snapshot snapshot() {
         String operation = coreOperationId;
         Snapshot current = snapshot.get();
-        if (operation.isEmpty() || !active.get() || closed.get()) return current;
+        if (operation.isEmpty() || !active.get() || closed.get() || !polling.compareAndSet(false, true)) return current;
         try {
             CoreDirectoryGateway.JoinOperation coreSnapshot = core.joinSnapshot(operation);
             if (operation.equals(coreOperationId) && generation.get() == current.generation()) {
@@ -95,6 +96,8 @@ public final class PublicJoinCoordinator implements Registration {
             }
         } catch (RuntimeException failure) {
             // A temporary snapshot failure does not discard an in-flight core operation.
+        } finally {
+            polling.set(false);
         }
         return snapshot.get();
     }
@@ -149,12 +152,13 @@ public final class PublicJoinCoordinator implements Registration {
 
     private void applyCore(long expectedGeneration, String listingId,
                            CoreDirectoryGateway.JoinOperation operation) {
+        if (!current(expectedGeneration)) return;
         State state = State.valueOf(operation.state().name());
-        update(expectedGeneration, listingId, state, operation.detailCode());
         if (terminal(state)) {
             active.set(false);
             coreOperationId = "";
         }
+        update(expectedGeneration, listingId, state, operation.detailCode());
     }
 
     private Snapshot failed(long expectedGeneration, String listingId, Throwable failure) {
@@ -187,8 +191,13 @@ public final class PublicJoinCoordinator implements Registration {
     }
 
     private void update(long expectedGeneration, String listingId, State state, String detail) {
-        if (closed.get() || generation.get() != expectedGeneration) return;
-        snapshot.set(new Snapshot(expectedGeneration, listingId, state, detail));
+        Snapshot next = new Snapshot(expectedGeneration, listingId, state, detail);
+        Snapshot previous;
+        do {
+            if (!current(expectedGeneration)) return;
+            previous = snapshot.get();
+            if (next.equals(previous)) return;
+        } while (!snapshot.compareAndSet(previous, next));
         try { changed.run(); } catch (RuntimeException ignored) { }
     }
 

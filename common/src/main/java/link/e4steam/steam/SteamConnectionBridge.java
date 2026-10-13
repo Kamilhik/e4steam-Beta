@@ -350,6 +350,7 @@ public final class SteamConnectionBridge {
     }
 
     void releaseActivity() {
+        if (!hostSide) SteamClientBridge.releaseLocalEndpoint(socket.getLocalPort());
         AutoCloseable activityToClose = activity.getAndSet(null);
         if (activityToClose == null) {
             return;
@@ -366,6 +367,16 @@ public final class SteamConnectionBridge {
         try {
             java.io.InputStream input = socket.getInputStream();
             while (!closed.get()) {
+                // Do not enqueue Minecraft DATA ahead of addon pre-login traffic.
+                // A queued DATA packet would otherwise block the shared Steam queue.
+                if (!addonNegotiationReady.get()) {
+                    try { Thread.sleep(10); }
+                    catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Pre-login wait cancelled", interrupted);
+                    }
+                    continue;
+                }
                 int read = input.read(buffer);
                 if (read < 0) {
                     if (outboundFinQueued.compareAndSet(false, true)) {

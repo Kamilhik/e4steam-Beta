@@ -59,6 +59,10 @@ final class CoreNetworkService implements NetworkService {
             this.reservation = reservation;
         }
         @Override public ChannelDescriptor descriptor() { return delegate.descriptor(); }
+        @Override public void beforeJoin(NetworkService.PreJoinHandler handler) {
+            if (isClosed()) throw new IllegalStateException("Channel registration is closed");
+            delegate.beforeJoin(handler);
+        }
         @Override public ChannelState state() {
             return isClosed() ? ChannelState.CLOSED : delegate.state();
         }

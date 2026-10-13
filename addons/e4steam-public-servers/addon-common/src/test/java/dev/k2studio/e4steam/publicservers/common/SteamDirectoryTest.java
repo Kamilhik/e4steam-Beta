@@ -110,6 +110,41 @@ final class SteamDirectoryTest {
             assertTrue(client.catalog(50, "", null).toCompletableFuture().join().entries().isEmpty());
         } finally { client.close(); timer.shutdownNow(); }
     }
+    @Test void synchronousScreenListenerCannotRecursivelyPollJoin() {
+        FakeLobbies lobbies = new FakeLobbies();
+        Gateway core = new Gateway();
+        core.joinState = CoreDirectoryGateway.JoinState.CONNECTING_MINECRAFT;
+        ScheduledThreadPoolExecutor timer = new ScheduledThreadPoolExecutor(1);
+        SteamDirectoryClient client = new SteamDirectoryClient(lobbies, CLOCK);
+        var config = PublicServersConfig.builder().registryOrigin(SteamDirectoryClient.ORIGIN)
+                .steamDirectory(true).integratedPublicationEnabled(true).build();
+        var environment = new ClientEnvironment("1.21.11", "fabric", "0.3.2-beta.1", 1,
+                DirectoryProtocol.VERSION, Map.of());
+        var reference = new java.util.concurrent.atomic.AtomicReference<PublicJoinCoordinator>();
+        var notifications = new java.util.concurrent.atomic.AtomicInteger();
+        Runnable listener = () -> {
+            assertTrue(notifications.incrementAndGet() < 12, "Recursive screen notification");
+            reference.get().snapshot();
+        };
+        try (SteamWorldPublisher publisher = new SteamWorldPublisher(lobbies, core, CLOCK, timer,
+                (level, code, fields) -> ApiResult.success(true));
+             PublicJoinCoordinator join = new PublicJoinCoordinator(client, core,
+                     new CompatibilityEvaluator(), environment, config, CLOCK, listener)) {
+            reference.set(join);
+            publisher.world(metadata());
+            var advertised = lobby(lobbies.request.metadata());
+            lobbies.pending.complete(ApiResult.success(advertised));
+            lobbies.results = List.of(advertised);
+            assertEquals(PublicJoinCoordinator.State.CONNECTING_MINECRAFT,
+                    join.join("steam.123", PublicServerType.INTEGRATED_WORLD).toCompletableFuture().join().state());
+            int before = notifications.get();
+            for (int i = 0; i < 10; i++) join.snapshot();
+            assertEquals(before, notifications.get(), "Unchanged snapshots must not notify the screen");
+            core.joinState = CoreDirectoryGateway.JoinState.ACTIVE;
+            assertEquals(PublicJoinCoordinator.State.ACTIVE, join.snapshot().state());
+            assertEquals(before + 1, notifications.get());
+        } finally { client.close(); timer.shutdownNow(); }
+    }
     @Test void lateSearchCannotRepopulateClosedCatalog() {
         FakeLobbies lobbies = new FakeLobbies();
         lobbies.searchPending = new CompletableFuture<>();
@@ -184,14 +219,15 @@ final class SteamDirectoryTest {
     private static final class Gateway implements CoreDirectoryGateway {
         boolean available = true;
         String joinedTarget;
+        JoinState joinState = JoinState.ACTIVE;
         public Availability availability() { return Availability.AVAILABLE; }
         public CompletionStage<PublicationTarget> publicationTarget(PublicServerType type, URI origin) {
             return available ? CompletableFuture.completedFuture(new PublicationTarget("iw_456", 1))
                     : CompletableFuture.failedFuture(new IllegalStateException("World closed"));
         }
         public CompletionStage<AttestationReceipt> attest(AttestationRequest request) { throw new AssertionError("No forged registry attestation"); }
-        public CompletionStage<JoinOperation> join(String target, String handle) { joinedTarget = target; return CompletableFuture.completedFuture(new JoinOperation("join.1", JoinState.ACTIVE, "")); }
-        public CompletionStage<JoinOperation> cancel(String id) { throw new AssertionError(); }
-        public JoinOperation joinSnapshot(String id) { throw new AssertionError(); }
+        public CompletionStage<JoinOperation> join(String target, String handle) { joinedTarget = target; return CompletableFuture.completedFuture(new JoinOperation("join.1", joinState, "")); }
+        public CompletionStage<JoinOperation> cancel(String id) { return CompletableFuture.completedFuture(new JoinOperation(id, JoinState.CANCELLED, "")); }
+        public JoinOperation joinSnapshot(String id) { return new JoinOperation(id, joinState, ""); }
     }
 }

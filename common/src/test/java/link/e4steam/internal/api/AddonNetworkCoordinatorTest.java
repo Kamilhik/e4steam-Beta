@@ -43,6 +43,62 @@ class AddonNetworkCoordinatorTest {
     }
 
     @Test
+    void preJoinWaitsForDecisionWhileAddonMessagesRemainAvailable() throws Exception {
+        ChannelDescriptor descriptor = descriptor("owner-addon:preflight", 1, 1,
+                Requirement.OPTIONAL, Direction.BIDIRECTIONAL, 8);
+        CountDownLatch received = new CountDownLatch(1);
+        ChannelHandle handle = register(descriptor, (context, payload) -> {
+            received.countDown();
+            return CompletableFuture.completedFuture(ApiResult.success(true));
+        });
+        CompletableFuture<Boolean> decision = new CompletableFuture<>();
+        CountDownLatch started = new CountDownLatch(1);
+        handle.beforeJoin(context -> { started.countDown(); return decision; });
+        assertTrue(coordinator.negotiate(SESSION, PEER, Collections.singletonList(descriptor), true).compatible());
+        CompletableFuture<Boolean> gate = coordinator.beforeJoin(SESSION, PEER);
+        assertTrue(started.await(2, TimeUnit.SECONDS));
+        assertFalse(gate.isDone());
+        assertTrue(coordinator.receive(SESSION, PEER, descriptor.id().value(), 1,
+                new byte[]{1}, true, false).isSuccess());
+        assertTrue(received.await(2, TimeUnit.SECONDS));
+        decision.complete(true);
+        assertTrue(gate.get(2, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void scopedNetworkHandleRegistersPreJoinBeforeMinecraftLogin() throws Exception {
+        try (link.e4steam.api.ResourceScope resources = new link.e4steam.internal.addon.ManagedResourceScope()) {
+            CoreNetworkService service = new CoreNetworkService(OWNER, capabilities(),
+                    new CoreContributionRegistry(), resources, coordinator);
+            ChannelDescriptor channel = descriptor("owner-addon:scoped-preflight", 1, 1,
+                    Requirement.OPTIONAL, Direction.BIDIRECTIONAL, 8);
+            ChannelHandle handle = service.register(channel, completedHandler()).value().orElseThrow();
+            CompletableFuture<Boolean> decision = new CompletableFuture<>();
+            CountDownLatch started = new CountDownLatch(1);
+            handle.beforeJoin(context -> { started.countDown(); return decision; });
+            assertTrue(coordinator.hasPreJoinHandlers());
+            assertTrue(coordinator.negotiate(SESSION, PEER, Collections.singletonList(channel), true).compatible());
+            CompletableFuture<Boolean> gate = coordinator.beforeJoin(SESSION, PEER);
+            assertTrue(started.await(2, TimeUnit.SECONDS));
+            assertFalse(gate.isDone(), "Minecraft must wait for the addon decision");
+            decision.complete(false);
+            assertFalse(gate.get(2, TimeUnit.SECONDS));
+            handle.close();
+            assertThrows(IllegalStateException.class, () -> handle.beforeJoin(context -> decision));
+        }
+    }
+
+    @Test
+    void failedPreJoinDoesNotPermitMinecraftLogin() throws Exception {
+        ChannelDescriptor descriptor = descriptor("owner-addon:preflight", 1, 1,
+                Requirement.OPTIONAL, Direction.BIDIRECTIONAL, 8);
+        ChannelHandle handle = register(descriptor, completedHandler());
+        handle.beforeJoin(context -> { throw new IllegalStateException("scan failed"); });
+        assertTrue(coordinator.negotiate(SESSION, PEER, Collections.singletonList(descriptor), true).compatible());
+        assertFalse(coordinator.beforeJoin(SESSION, PEER).get(2, TimeUnit.SECONDS));
+    }
+
+    @Test
     void requiredMismatchRejectsButOptionalMismatchDoesNot() {
         register(descriptor("owner-addon:required", 2, 3,
                 Requirement.REQUIRED, Direction.BIDIRECTIONAL, 8), completedHandler());

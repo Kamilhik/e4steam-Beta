@@ -45,7 +45,7 @@ public final class TextPolicy {
             cyrillic |= script == Character.UnicodeScript.CYRILLIC;
             greek |= script == Character.UnicodeScript.GREEK;
         }
-        if ((latin ? 1 : 0) + (cyrillic ? 1 : 0) + (greek ? 1 : 0) > 1) {
+        if (!field.equals("name") && (latin ? 1 : 0) + (cyrillic ? 1 : 0) + (greek ? 1 : 0) > 1) {
             throw new IllegalArgumentException(field + " mixes confusable scripts");
         }
         String lower = normalized.toLowerCase(Locale.ROOT);

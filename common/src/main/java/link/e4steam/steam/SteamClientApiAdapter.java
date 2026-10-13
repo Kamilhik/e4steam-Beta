@@ -63,6 +63,7 @@ public final class SteamClientApiAdapter {
                         java.net.SocketAddress remoteAddress) {
                     return SteamRuntime.get().authenticatedMinecraftPeer(remoteAddress);
                 }
+                @Override public void preJoinWaiting(SteamConnectionBridge bridge) { SteamRuntime.get().preJoinWaiting(bridge); }
                 @Override public boolean sendAddonHello(
                         SteamConnectionBridge bridge, byte[] packet) {
                     return SteamRuntime.get().sendAddonHello(bridge, packet);

@@ -6,6 +6,22 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SteamGuestJoinStateTest {
     @Test
+    void preJoinExtendsOnlyTheOwnedPendingBridge() {
+        SteamGuestJoinState state = new SteamGuestJoinState(100);
+        state.waitForConfirmation();
+        state.beginConnect(200);
+        Object bridge = new Object();
+        state.bridgeOpened(bridge);
+        state.extendPreJoin(new Object(), 1000);
+        assertTrue(state.expired(200));
+        state.extendPreJoin(bridge, 1000);
+        assertFalse(state.expired(200));
+        assertTrue(state.expired(1000));
+        state.cancel();
+        state.extendPreJoin(bridge, 2000);
+        assertEquals(SteamGuestJoinState.Phase.CANCELED, state.phase());
+    }
+    @Test
     void canceledInvitationCannotBeClaimedOrConnected() {
         SteamGuestJoinState state = new SteamGuestJoinState(100);
         state.waitForConfirmation();

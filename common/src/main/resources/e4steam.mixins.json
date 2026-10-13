@@ -7,13 +7,13 @@
     "ServerLoginPacketListenerImplMixin",
     "ServerConnectionListenerMixin",
     "ConnectionDiagnosticsMixin",
+    "ClientPreJoinTimeoutMixin",
     "SkinRestorationLoginMixin"
   ],
   "injectors": {
     "defaultRequire": 1
   },
   "client": [
-    "ClientTerrainDiagnosticsMixin",
     "BanListCommandsMixin",
     "IntegratedServerConnectionListenerMixin",
     "BanPlayerCommandsMixin",

@@ -15,13 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * Portable native-widget catalog used by Minecraft 1.17-1.21.x.
- *
- * <p>It deliberately leaves custom rendering to the 26.x implementation: this
- * screen only links stable Screen, EditBox and Button APIs, so old release JARs
- * never contain references to GuiGraphicsExtractor or other new GUI classes.</p>
- */
+/** Catalog with native keyboard controls and a portable card renderer. */
 public final class PublicServersScreen extends Screen {
     private int refreshTicks;
     private static final int MAX_ROWS = 12;
@@ -45,7 +39,8 @@ public final class PublicServersScreen extends Screen {
     private Button previousButton;
     private Button nextButton;
     private Button connectButton;
-    private Button statusButton;
+    private Component statusText = PortableComponents.literal("");
+    private int contentLeft, contentWidth, listTop, rowHeight, footerTop;
 
     public PublicServersScreen(Screen parent) {
         super(PortableComponents.translatable("e4steam_public_servers.screen.title"));
@@ -55,21 +50,20 @@ public final class PublicServersScreen extends Screen {
     @Override
     protected void init() {
         open = true;
+        rowButtons.clear();
         closeListener();
         PublicServersClientBridge.setCreatorName(minecraft.getUser().getName());
 
-        int contentWidth = Math.min(620, Math.max(220, width - 20));
+        contentWidth = Math.min(620, Math.max(180, width - 24));
         int left = (width - contentWidth) / 2;
+        contentLeft = left;
+        addButton(PortableMinecraftUi.button(PortableComponents.translatable("e4steam_public_servers.name.open"),
+                ignored -> minecraft.setScreen(new ServerNameScreen(this)), left + contentWidth - 120, 8, 120, 20));
         int smallGap = 4;
         int refreshWidth = Math.min(88, Math.max(68, contentWidth / 5));
         int searchWidth = contentWidth - refreshWidth - smallGap;
 
-        Button titleButton = addButton(PortableMinecraftUi.button(
-                PortableComponents.translatable("e4steam_public_servers.screen.title"),
-                ignored -> { }, left, 8, contentWidth, 20));
-        titleButton.active = false;
-
-        searchBox = addRenderableWidget(new EditBox(font, left, 32, searchWidth, 20,
+        searchBox = addRenderableWidget(new EditBox(font, left, 40, searchWidth, 20,
                 PortableComponents.translatable("e4steam_public_servers.search")));
         searchBox.setMaxLength(64);
         searchBox.setValue(searchText);
@@ -84,22 +78,22 @@ public final class PublicServersScreen extends Screen {
         Button refresh = addButton(PortableMinecraftUi.button(
                 PortableComponents.translatable("e4steam_public_servers.refresh"),
                 ignored -> PublicServersClientBridge.refresh(),
-                left + searchWidth + smallGap, 32, refreshWidth, 20));
+                left + searchWidth + smallGap, 40, refreshWidth, 20));
         PortableMinecraftUi.tooltip(refresh, PortableComponents.translatable(
                 "e4steam_public_servers.refresh.tooltip"));
 
         int tabWidth = contentWidth / 3;
         allButton = addButton(PortableMinecraftUi.button(PortableComponents.translatable(
                         "e4steam_public_servers.filter.all"), ignored -> selectType(null),
-                left, 56, tabWidth, 20));
+                left, 64, tabWidth, 20));
         worldsButton = addButton(PortableMinecraftUi.button(PortableComponents.translatable(
                         "e4steam_public_servers.filter.worlds"),
                 ignored -> selectType(PublicServerType.INTEGRATED_WORLD),
-                left + tabWidth, 56, tabWidth, 20));
+                left + tabWidth, 64, tabWidth, 20));
         dedicatedButton = addButton(PortableMinecraftUi.button(PortableComponents.translatable(
                         "e4steam_public_servers.filter.dedicated"),
                 ignored -> selectType(PublicServerType.DEDICATED_SERVER),
-                left + tabWidth * 2, 56, contentWidth - tabWidth * 2, 20));
+                left + tabWidth * 2, 64, contentWidth - tabWidth * 2, 20));
 
         int filterWidth = (contentWidth - smallGap) / 2;
         compatibleButton = addButton(PortableMinecraftUi.button(PortableComponents.literal(""),
@@ -108,30 +102,31 @@ public final class PublicServersScreen extends Screen {
                     scrollIndex = 0;
                     PublicServersClientBridge.compatibleOnly(compatibleOnly);
                     syncSnapshot();
-                }, left, 80, filterWidth, 20));
+                }, left, 88, filterWidth, 20));
         slotsButton = addButton(PortableMinecraftUi.button(PortableComponents.literal(""),
                 ignored -> {
                     freeSlotsOnly = !freeSlotsOnly;
                     scrollIndex = 0;
                     PublicServersClientBridge.hasSlotsOnly(freeSlotsOnly);
                     syncSnapshot();
-                }, left + filterWidth + smallGap, 80,
+                }, left + filterWidth + smallGap, 88,
                 contentWidth - filterWidth - smallGap, 20));
 
-        int footerTop = Math.max(130, height - 48);
-        int listTop = 104;
-        visibleRows = Math.max(1, Math.min(MAX_ROWS, (footerTop - listTop - 4) / 22));
+        footerTop = Math.max(164, height - 54);
+        listTop = 114;
+        rowHeight = height < 280 ? 32 : 40;
+        visibleRows = Math.max(1, Math.min(MAX_ROWS, (footerTop - listTop - 18) / (rowHeight + 4)));
         for (int row = 0; row < visibleRows; row++) {
             final int rowOffset = row;
             Button button = addButton(PortableMinecraftUi.button(PortableComponents.literal(""),
-                    ignored -> selectVisibleRow(rowOffset), left, listTop + row * 22,
-                    contentWidth, 20));
+                    ignored -> selectVisibleRow(rowOffset), left, listTop + row * (rowHeight + 4),
+                    contentWidth, rowHeight));
             rowButtons.add(button);
         }
 
-        int navWidth = Math.min(70, Math.max(46, contentWidth / 7));
-        int connectWidth = Math.min(160, Math.max(100, contentWidth / 3));
-        int backWidth = Math.min(100, Math.max(70, contentWidth / 5));
+        int navWidth = 24;
+        int connectWidth = Math.min(180, contentWidth - 126);
+        int backWidth = 60;
         previousButton = addButton(PortableMinecraftUi.button(PortableComponents.literal("<"),
                 ignored -> scroll(-visibleRows), left, footerTop, navWidth, 20));
         nextButton = addButton(PortableMinecraftUi.button(PortableComponents.literal(">"),
@@ -139,14 +134,10 @@ public final class PublicServersScreen extends Screen {
                 navWidth, 20));
         connectButton = addButton(PortableMinecraftUi.button(PortableComponents.translatable(
                         "e4steam_public_servers.connect"), ignored -> joinSelected(),
-                left + (contentWidth - connectWidth) / 2, footerTop, connectWidth, 20));
+                left + 60, footerTop, connectWidth, 20));
         addButton(PortableMinecraftUi.button(PortableComponents.translatable(
                         "e4steam_public_servers.back"), ignored -> onClose(),
                 left + contentWidth - backWidth, footerTop, backWidth, 20));
-        statusButton = addButton(PortableMinecraftUi.button(PortableComponents.literal(""),
-                ignored -> { }, left, footerTop + 24, contentWidth, 20));
-        statusButton.active = false;
-
         listener = PublicServersClientBridge.listen(() -> {
             Minecraft client = Minecraft.getInstance();
             client.execute(() -> {
@@ -257,19 +248,41 @@ public final class PublicServersScreen extends Screen {
                 || selected != null && selected.compatibility().joinable();
         connectButton.setMessage(PortableComponents.translatable(joining
                 ? "e4steam_public_servers.cancel" : "e4steam_public_servers.connect"));
-        statusButton.setMessage(statusMessage(operation));
+        statusText = statusMessage(operation);
     }
 
     private Component rowMessage(PublicServersSnapshot.Item item) {
-        ListingMetadata metadata = item.entry().metadata();
-        String marker = item.entry().listingId().equals(snapshot.selectedListingId()) ? "> " : "";
-        String type = PortableComponents.translatable(item.entry().type()
-                == PublicServerType.INTEGRATED_WORLD
-                ? "e4steam_public_servers.type.integrated"
-                : "e4steam_public_servers.type.dedicated").getString();
-        return PortableComponents.literal(marker + metadata.name() + "  |  " + type + "  |  "
-                + metadata.minecraftVersion() + " " + metadata.loader() + "  |  "
-                + metadata.players() + "/" + metadata.capacity());
+        return PortableComponents.literal(item.entry().metadata().name());
+    }
+
+    public void renderCatalog(Object context, int mouseX, int mouseY) {
+        PortableGraphics g = new PortableGraphics(context);
+        int left = contentLeft;
+        g.drawString(font, font.plainSubstrByWidth(title.getString(), contentWidth - 128), left, 10, 0xFFFFFF, false);
+        g.drawCenteredString(font, PortableComponents.translatable("e4steam_public_servers.browser.subtitle"), width / 2, 24, 0xA5B4C8);
+        for (int row = 0; row < rowButtons.size(); row++) {
+            int index = scrollIndex + row;
+            if (index >= snapshot.items().size()) break;
+            PublicServersSnapshot.Item item = snapshot.items().get(index);
+            ListingMetadata m = item.entry().metadata();
+            int y = listTop + row * (rowHeight + 4);
+            boolean selected = item.entry().listingId().equals(snapshot.selectedListingId());
+            boolean hovered = mouseX >= left && mouseX < left + contentWidth && mouseY >= y && mouseY < y + rowHeight;
+            g.fill(left + 1, y + 1, left + contentWidth - 1, y + rowHeight - 1, selected ? 0xFF203F4B : hovered ? 0xFF273445 : 0xFF182331);
+            g.fill(left + 1, y + 1, left + 4, y + rowHeight - 1, selected ? 0xFF57D5B1 : item.compatibility().joinable() ? 0xFF4E7185 : 0xFF9A665D);
+            String players = m.players() + "/" + m.capacity();
+            int nameWidth = Math.max(20, contentWidth - font.width(players) - 34);
+            g.drawString(font, font.plainSubstrByWidth(m.name(), nameWidth), left + 10, y + 5, 0xFFFFFF, false);
+            g.drawString(font, players, left + contentWidth - font.width(players) - 10, y + 5, 0xAFD8CD, false);
+            String details = m.minecraftVersion() + " · " + m.loader() + " · " + PortableComponents.translatable(item.entry().type() == PublicServerType.INTEGRATED_WORLD ? "e4steam_public_servers.type.integrated" : "e4steam_public_servers.type.dedicated").getString();
+            g.drawString(font, font.plainSubstrByWidth(details, contentWidth - 20), left + 10, y + rowHeight - 12, 0xA5B4C8, false);
+        }
+        if (snapshot.items().isEmpty()) {
+            g.drawCenteredString(font, statusText, width / 2, listTop + 10, 0xCED8E5);
+        }
+        g.drawString(font, font.plainSubstrByWidth(statusText.getString(), contentWidth), left, footerTop - 12, 0xAFD8CD, false);
+        g.fill(left + 60, footerTop + 19, left + 60 + connectButton.getWidth(), footerTop + 21, 0xFF57D5B1);
+        g.drawString(font, font.plainSubstrByWidth(PortableComponents.translatable("e4steam_public_servers.browser.publish_help").getString(), contentWidth), left, footerTop + 28, 0xA5B4C8, false);
     }
 
     private Component rowTooltip(PublicServersSnapshot.Item item) {

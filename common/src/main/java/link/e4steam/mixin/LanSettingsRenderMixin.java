@@ -8,10 +8,12 @@ import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Screen's vanilla widget renderer has both PoseStack and GuiGraphics signatures. */
+/** Draw the LAN panel after vanilla background effects and before its widgets.
+ * The first List iterator is the widget pass on both PoseStack and GuiGraphics screens.
+ */
 @Mixin(Screen.class)
 public abstract class LanSettingsRenderMixin {
-    @Inject(method="/^(render|method_25394|m_88315_)$/", at=@At("HEAD"), require=0, remap=false)
+    @Inject(method="/^(render|method_25394|m_88315_)$/", at=@At(value="INVOKE", target="Ljava/util/List;iterator()Ljava/util/Iterator;", ordinal=0), require=0, remap=false)
     private void e4steam$panel(@Coerce Object graphics, int x, int y, float delta, CallbackInfo ci) {
         if ((Object)this instanceof LanSettingsScreen) ((LanSettingsScreen)(Object)this).renderLanPanel(graphics);
     }

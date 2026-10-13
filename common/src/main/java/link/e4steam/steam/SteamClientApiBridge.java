@@ -22,6 +22,7 @@ public final class SteamClientApiBridge {
         String opaquePeerId(long remoteSteamId);
         boolean disconnect(long generation);
         long authenticatedMinecraftPeer(SocketAddress remoteAddress);
+        default void preJoinWaiting(SteamConnectionBridge bridge) {}
         boolean sendAddonHello(SteamConnectionBridge bridge, byte[] packet);
         boolean sendAddonFrame(SteamConnectionBridge bridge, byte[] packet, boolean reliable);
         CompletableFuture<PublicLobbyTarget> publicHostLobbyTarget();
@@ -107,6 +108,8 @@ public final class SteamClientApiBridge {
     static String opaquePeerId(long remoteSteamId) {
         return CURRENT.get().opaquePeerId(remoteSteamId);
     }
+    static void preJoinWaiting(SteamConnectionBridge bridge) { CURRENT.get().preJoinWaiting(bridge); }
+
     static boolean sendAddonHello(SteamConnectionBridge bridge, byte[] packet) {
         return CURRENT.get().sendAddonHello(bridge, packet);
     }

@@ -249,6 +249,43 @@ public final class AddonNetworkCoordinator implements AutoCloseable {
 
     public void transport(Transport transport) { this.transport = transport; }
 
+    /** Runs negotiated addons' pre-login checks without occupying a native callback thread. */
+    public CompletableFuture<Boolean> beforeJoin(SessionId sessionId, PeerId peerId) {
+        List<CompletableFuture<Boolean>> checks = new ArrayList<>();
+        synchronized (lock) {
+            PeerState peer = peers.get(new PeerKey(sessionId, peerId));
+            if (closed || !current(sessionId, peerId) || peer == null)
+                return CompletableFuture.completedFuture(false);
+            for (Endpoint endpoint : channels.values()) {
+                NegotiatedChannel selected = peer.channels.get(endpoint.descriptor.id().value());
+                link.e4steam.api.network.NetworkService.PreJoinHandler handler = endpoint.preJoin;
+                if (selected == null || handler == null || endpoint.handle.isClosed()) continue;
+                CompletableFuture<Boolean> check = new CompletableFuture<>();
+                checks.add(check);
+                ApiResult<link.e4steam.api.scheduler.TaskHandle> scheduled = scheduler.execute(
+                        ExecutionContext.ADDON_WORKER, () -> {
+                            try {
+                                CompletionStage<Boolean> pending = handler.check(
+                                        new MessageContext(sessionId, peerId, selected.version));
+                                if (pending == null) check.complete(false);
+                                else pending.whenComplete((accepted, failure) ->
+                                        check.complete(failure == null && Boolean.TRUE.equals(accepted)));
+                            } catch (Throwable failure) { check.complete(false); }
+                        }, Duration.ofSeconds(2));
+                if (!scheduled.isSuccess()) check.complete(false);
+            }
+        }
+        return CompletableFuture.allOf(checks.toArray(new CompletableFuture<?>[0]))
+                .thenApply(ignored -> current(sessionId, peerId)
+                        && checks.stream().allMatch(check -> Boolean.TRUE.equals(check.getNow(false))));
+    }
+
+    public boolean hasPreJoinHandlers() {
+        synchronized (lock) {
+            return channels.values().stream().anyMatch(endpoint -> !endpoint.handle.isClosed() && endpoint.preJoin != null);
+        }
+    }
+
     public void closeSession(long generation) {
         synchronized (lock) {
             peers.entrySet().removeIf(entry -> entry.getKey().generation == generation);
@@ -422,6 +459,7 @@ public final class AddonNetworkCoordinator implements AutoCloseable {
         private final MessageHandler handler;
         private final CoreCapabilityService capabilities;
         private final Handle handle = new Handle();
+        private volatile link.e4steam.api.network.NetworkService.PreJoinHandler preJoin;
 
         private Endpoint(AddonId owner, ChannelDescriptor descriptor,
                          MessageHandler handler, CoreCapabilityService capabilities) {
@@ -435,6 +473,13 @@ public final class AddonNetworkCoordinator implements AutoCloseable {
             private volatile ChannelState state = ChannelState.REGISTERED;
             private Handle() { super(null); }
             @Override public ChannelDescriptor descriptor() { return descriptor; }
+            @Override public void beforeJoin(link.e4steam.api.network.NetworkService.PreJoinHandler handler) {
+                synchronized (lock) {
+                    if (isClosed() || closed) throw new IllegalStateException("Channel is closed");
+                    if (!peers.isEmpty()) throw new IllegalStateException("Register pre-join handler before connecting");
+                    preJoin = java.util.Objects.requireNonNull(handler, "handler");
+                }
+            }
             @Override public ChannelState state() {
                 return isClosed() ? ChannelState.CLOSED : state;
             }

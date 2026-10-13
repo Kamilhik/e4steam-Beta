@@ -45,21 +45,6 @@ In plain language:
 | ⏳ | The artifact or code exists, but the stated manual scenario has not been recorded yet. |
 | — | e4steam does not provide that combination. |
 
-## 0.3.2-beta.1 automated checks (2026-10-11)
-
-All 19 runtime JAR variants were built and passed the release artifact audit.
-The common suite completed 220 tests: 214 passed and 6 skipped. The LAN screen
-harness checked 12 combinations of language, viewport size and world state,
-including input validation, resize preservation and the published port lock.
-
-Skin restoration was checked against the actual Authlib libraries shipped for
-Minecraft 1.7.10, 1.12.2, 1.16.5, 1.20.2 and 1.21.11. Each check covered signed
-textures, preserved player identity, existing texture priority and completion
-of the login state. These are component checks, not Minecraft launch results.
-
-No new two-client Steam multiplayer run has been recorded for this beta.
-The older manual evidence below applies only to its stated version and scope.
-
 ## 0.3.1 automated platform status
 
 | Area | Windows x64 | Linux x64 | macOS Intel | macOS arm64 |

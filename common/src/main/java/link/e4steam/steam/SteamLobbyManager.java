@@ -358,6 +358,10 @@ final class SteamLobbyManager implements AutoCloseable {
         }
     }
 
+    void preJoinWaiting(SteamConnectionBridge bridge) {
+        guestJoinState.extendPreJoin(bridge, System.currentTimeMillis() + 660_000L);
+    }
+
     void clientBridgeClosed(SteamConnectionBridge bridge, boolean anotherBridgeExists) {
         if (guestLobbyId != 0 && guestJoinState.ownsBridge(bridge) && !anotherBridgeExists) {
             leaveGuestLobby();
